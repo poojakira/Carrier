@@ -2,6 +2,25 @@
 
 This repository is intended to run against real services, not hardcoded demo data.
 
+## Quick Start (one command)
+
+### Windows
+```powershell
+.\start.ps1
+```
+
+### Linux/Mac
+```bash
+chmod +x start.sh && ./start.sh
+```
+
+### Docker (production)
+```bash
+docker compose up --build
+```
+
+That's it. Open http://localhost:3000 and register your account.
+
 ## Production architecture
 - Next.js + TypeScript application server
 - PostgreSQL persistence

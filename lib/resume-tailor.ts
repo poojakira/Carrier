@@ -6,10 +6,10 @@
  * FORMAT RULES:
  * - Combined XYZ + STAR format for every bullet point
  *   XYZ: "Accomplished [X] as measured by [Y] by doing [Z]"
- *   STAR: Situation → Task → Action → Result (compressed into XYZ structure)
- *   Combined: each bullet starts from a Situation/Task context (S+T),
- *             describes the Action using XYZ phrasing (A+Z),
- *             and ends with a quantified Result (R+X+Y)
+ *   STAR: Situation → Task → Action → Result
+ *   Combined: each bullet is one natural sentence combining context,
+ *             action method, and quantified accomplishment
+ *             without any visible framework labels
  * 
  * TEMPLATE RULES:
  * - Font: Calibri, Arial, or Helvetica (ATS-safe sans-serif)
@@ -62,6 +62,7 @@ export type ProjectEntry = {
   result?: string;
   metrics?: string[];
   technologies?: string[];
+  isProject?: boolean;
 };
 
 export type EducationEntry = {
@@ -163,16 +164,6 @@ export const TEMPLATE_RULES = {
   // Bullet format
   bulletFormat: {
     primary: 'xyz_star_combined',
-    // Combined formula:
-    // "[Context from S+T], [Action verb] [Z-method] resulting in [X-accomplishment] ([Y-metric])"
-    // Example: "Facing 40% customer churn, redesigned onboarding flow using A/B testing, reducing churn by 25% within 3 months"
-    template: '[Situation context], [action verb] [method/Z] resulting in [accomplishment/X] ([metric/Y])',
-    starMapping: {
-      S: 'Opening context clause',
-      T: 'Implicit in the action verb choice',
-      A: 'The "by doing [Z]" component',
-      R: 'The "accomplished [X] as measured by [Y]" component',
-    },
   },
 } as const;
 
@@ -293,16 +284,11 @@ function matchAndPrioritizeSkills(
 // ─── Combined XYZ + STAR Bullet Formatter ──────────────────────────────────────
 
 /**
- * Combines STAR and XYZ into a single bullet format:
+ * Combines situation context and accomplishment into one natural professional sentence.
  * 
- * Formula: [S/T context], [action verb + Z method], [X accomplishment] ([Y metric])
- * 
- * Examples:
- * "Facing rising infrastructure costs (S), migrated 12 services to Kubernetes (A/Z), 
- *  reducing monthly cloud spend by 40% ($180K annual savings) (R/X/Y)"
- * 
- * "To improve developer velocity (T), implemented CI/CD pipeline with automated testing (A/Z),
- *  cutting deployment time from 2 hours to 15 minutes (R/X/Y)"
+ * Output reads like:
+ *   "Reduced cloud infrastructure costs by 40% ($180K annually) by migrating 12 microservices to Kubernetes during a cost-optimization initiative"
+ *   "Increased deployment frequency from weekly to 15-minute cycles by implementing CI/CD pipelines with automated testing for a team of 8 engineers"
  */
 function formatCombinedXYZSTAR(entry: {
   situation?: string;
@@ -312,22 +298,12 @@ function formatCombinedXYZSTAR(entry: {
   metric?: string;
   keywords?: string[];  // Job keywords to weave in
 }): string {
-  const parts: string[] = [];
-
-  // S/T context (optional opening clause)
-  if (entry.situation) {
-    parts.push(capitalizeFirst(entry.situation));
-  } else if (entry.task) {
-    parts.push(`To ${entry.task.toLowerCase().replace(/^to\s+/i, '')}`);
-  }
-
-  // A/Z: action + method (the core verb phrase)
+  // Build a single natural sentence: result + "by" + action + context
   let actionPhrase = entry.action;
   // Inject keywords if they naturally fit
   if (entry.keywords?.length) {
     for (const kw of entry.keywords.slice(0, 2)) {
       if (!actionPhrase.toLowerCase().includes(kw.toLowerCase())) {
-        // Only inject if it reads naturally
         if (actionPhrase.includes(' using ') || actionPhrase.includes(' with ')) {
           actionPhrase += `, ${kw}`;
         }
@@ -335,20 +311,26 @@ function formatCombinedXYZSTAR(entry: {
     }
   }
 
-  if (parts.length > 0) {
-    parts.push(actionPhrase.charAt(0).toLowerCase() + actionPhrase.slice(1));
-  } else {
-    parts.push(capitalizeFirst(actionPhrase));
-  }
-
-  // R/X/Y: result with metric
+  // Construct result clause
+  let resultClause = capitalizeFirst(entry.result.replace(/[.,]$/, ''));
   if (entry.metric) {
-    parts.push(`resulting in ${entry.result} (${entry.metric})`);
-  } else {
-    parts.push(`resulting in ${entry.result}`);
+    resultClause += ` (${entry.metric})`;
   }
 
-  return parts.join(', ');
+  // Construct action clause (lowercase, introduced with "by")
+  const actionClause = `by ${actionPhrase.charAt(0).toLowerCase() + actionPhrase.slice(1).replace(/[.,]$/, '')}`;
+
+  // Construct optional context clause
+  let contextClause = '';
+  if (entry.situation) {
+    const sit = entry.situation.replace(/[.,]$/, '').trim();
+    contextClause = ` during ${sit.charAt(0).toLowerCase() + sit.slice(1)}`;
+  } else if (entry.task) {
+    const task = entry.task.replace(/^to\s+/i, '').replace(/[.,]$/, '').trim();
+    contextClause = ` to ${task.charAt(0).toLowerCase() + task.slice(1)}`;
+  }
+
+  return `${resultClause} ${actionClause}${contextClause}`;
 }
 
 /**
@@ -519,21 +501,28 @@ export function tailorResume(profile: ProfileData, job: JobContext): TailoredRes
   const tailoringNotes: string[] = [];
   const injectedKeywords: string[] = [];
 
-  // Get experience entries
-  let experiences = profile.projects.length > 0
+  // Get all entries
+  let allEntries = profile.projects.length > 0
     ? [...profile.projects]
     : parseResumeExperience(profile.resumeText);
 
-  // Sort by relevance to this job
-  experiences = experiences
+  // Split entries: isProject=true → Projects section, others → Experience section
+  const projectEntries = allEntries.filter(e => e.isProject === true);
+  const workEntries = allEntries.filter(e => !e.isProject);
+
+  // Sort each group by relevance to this job
+  const sortByRelevance = (entries: ProjectEntry[]) => entries
     .map(exp => ({ exp, score: scoreRelevance(exp, keywords) }))
     .sort((a, b) => b.score - a.score)
     .map(({ exp }) => exp);
 
+  const experiences = sortByRelevance(workEntries);
+  const projects = sortByRelevance(projectEntries);
+
   tailoringNotes.push(`Font: ${TEMPLATE_RULES.font.family} | Name: ${TEMPLATE_RULES.font.nameSize} bold | Body: ${TEMPLATE_RULES.font.bodySize}`);
   tailoringNotes.push(`Matched ${matched.length}/${profile.skills.length} skills to job keywords`);
   tailoringNotes.push(`Extracted ${keywords.technical.length} technical, ${keywords.action.length} action, ${keywords.domain.length} domain keywords from JD`);
-  tailoringNotes.push(`Reordered ${experiences.length} experiences by relevance to ${job.title}`);
+  tailoringNotes.push(`Reordered ${experiences.length} work experiences and ${projects.length} projects by relevance to ${job.title}`);
   tailoringNotes.push(`Format: Combined XYZ+STAR (every bullet uses both frameworks)`);
   tailoringNotes.push(`Template: ${TEMPLATE_RULES.layout.margins} margins, ${TEMPLATE_RULES.font.bodySize} body, max ${TEMPLATE_RULES.layout.maxPages} pages`);
 
@@ -542,9 +531,14 @@ export function tailorResume(profile: ProfileData, job: JobContext): TailoredRes
   plainSections.push(buildPlainHeader(profile, job));
   plainSections.push(buildPlainSummary(profile, job, matched, keywords));
   plainSections.push(buildPlainSkills(prioritized));
-  const { text: expText, injected: expInjected } = buildPlainExperience(experiences, keywords, job);
-  plainSections.push(expText);
-  injectedKeywords.push(...expInjected);
+  if (experiences.length > 0) {
+    const { text: expText, injected: expInjected } = buildPlainExperience(experiences, keywords, job);
+    plainSections.push(expText);
+    injectedKeywords.push(...expInjected);
+  }
+  if (projects.length > 0) {
+    plainSections.push(buildPlainProjects(projects, keywords));
+  }
   if (profile.education.length > 0) plainSections.push(buildPlainEducation(profile.education));
   if (profile.certifications.length > 0) plainSections.push(buildPlainCertifications(profile.certifications));
 
@@ -555,7 +549,12 @@ export function tailorResume(profile: ProfileData, job: JobContext): TailoredRes
   htmlSections.push(buildHTMLHeader(profile, job));
   htmlSections.push(buildHTMLSummary(profile, job, matched, keywords));
   htmlSections.push(buildHTMLSkills(prioritized, matched));
-  htmlSections.push(buildHTMLExperience(experiences, keywords, job));
+  if (experiences.length > 0) {
+    htmlSections.push(buildHTMLExperience(experiences, keywords, job));
+  }
+  if (projects.length > 0) {
+    htmlSections.push(buildHTMLProjects(projects, keywords));
+  }
   if (profile.education.length > 0) htmlSections.push(buildHTMLEducation(profile.education));
   if (profile.certifications.length > 0) htmlSections.push(buildHTMLCertifications(profile.certifications));
 
@@ -636,9 +635,9 @@ function ensure100PercentKeywordMatch(
 
     // HTML: Add to skills section
     enhancedHtml = enhancedHtml.replace(
-      /(<ul class="jake-skills">)([\s\S]*?)(<\/ul>)/,
+      /(<ul class="resume-skills">)([\s\S]*?)(<\/ul>)/,
       (match, open, existing, close) => {
-        const newSkills = `    <li><span class="jake-skills-label">Additional</span>: ${missingTechnical.map(t => escapeHtml(normalizeForDisplay(t))).join(', ')}</li>`;
+        const newSkills = `    <li><span class="resume-skills-label">Additional</span>: ${missingTechnical.map(t => escapeHtml(normalizeForDisplay(t))).join(', ')}</li>`;
         return `${open}${existing}${newSkills}\n${close}`;
       }
     );
@@ -660,7 +659,7 @@ function ensure100PercentKeywordMatch(
 
     // HTML: Append to summary
     enhancedHtml = enhancedHtml.replace(
-      /(jake-section">Summary<\/div>[\s\S]*?<li[^>]*>)([\s\S]*?)(<\/li>)/,
+      /(resume-section">Summary<\/div>[\s\S]*?<li[^>]*>)([\s\S]*?)(<\/li>)/,
       (match, before, existing, close) => {
         return `${before}${existing.trim()} ${escapeHtml(actionPhrase)}${close}`;
       }
@@ -690,9 +689,9 @@ function ensure100PercentKeywordMatch(
       );
 
       enhancedHtml = enhancedHtml.replace(
-        /(<ul class="jake-skills">)([\s\S]*?)(<\/ul>)/,
+        /(<ul class="resume-skills">)([\s\S]*?)(<\/ul>)/,
         (match, open, existing, close) => {
-          const newSkills = `    <li><span class="jake-skills-label">Domain</span>: ${domainAsSkills.map(d => escapeHtml(normalizeForDisplay(d))).join(', ')}</li>`;
+          const newSkills = `    <li><span class="resume-skills-label">Domain</span>: ${domainAsSkills.map(d => escapeHtml(normalizeForDisplay(d))).join(', ')}</li>`;
           return `${open}${existing}${newSkills}\n${close}`;
         }
       );
@@ -711,7 +710,7 @@ function ensure100PercentKeywordMatch(
       );
 
       enhancedHtml = enhancedHtml.replace(
-        /(jake-section">Summary<\/div>[\s\S]*?<li[^>]*>)([\s\S]*?)(<\/li>)/,
+        /(resume-section">Summary<\/div>[\s\S]*?<li[^>]*>)([\s\S]*?)(<\/li>)/,
         (match, before, existing, close) => {
           return `${before}${existing.trim()} ${escapeHtml(domainPhrase)}${close}`;
         }
@@ -737,9 +736,9 @@ function ensure100PercentKeywordMatch(
     );
 
     enhancedHtml = enhancedHtml.replace(
-      /(<ul class="jake-skills">)([\s\S]*?)(<\/ul>)/,
+      /(<ul class="resume-skills">)([\s\S]*?)(<\/ul>)/,
       (match, open, existing, close) => {
-        const extra = `    <li><span class="jake-skills-label">Relevant</span>: ${stillMissing.map(k => escapeHtml(normalizeForDisplay(k))).join(', ')}</li>`;
+        const extra = `    <li><span class="resume-skills-label">Relevant</span>: ${stillMissing.map(k => escapeHtml(normalizeForDisplay(k))).join(', ')}</li>`;
         return `${open}${existing}${extra}\n${close}`;
       }
     );
@@ -914,25 +913,75 @@ function buildPlainCertifications(certs: string[]): string {
   return `${header}\n${separator}\n${certs.map(c => `  ${TEMPLATE_RULES.content.bulletSymbol} ${c}`).join('\n')}`;
 }
 
+function buildPlainProjects(
+  projects: ProjectEntry[],
+  keywords: { technical: string[]; action: string[]; domain: string[] }
+): string {
+  const header = 'PROJECTS';
+  const separator = '─'.repeat(header.length);
+  const entries: string[] = [];
+
+  const topProjects = projects.slice(0, TEMPLATE_RULES.content.maxExperiences);
+
+  for (const proj of topProjects) {
+    const name = proj.title || 'Project';
+    const techs = (proj.technologies || []).join(', ');
+    const duration = proj.duration || '';
+
+    // Format: Project Name | Technologies                              Date
+    const leftPart = techs ? `${name} | ${techs}` : name;
+    const titleLine = duration
+      ? `${leftPart}${' '.repeat(Math.max(1, TEMPLATE_RULES.layout.pageWidthChars - leftPart.length - duration.length))}${duration}`
+      : leftPart;
+
+    // Build bullets from description/situation + real metrics
+    const bullets: string[] = [];
+
+    if (proj.situation) {
+      bullets.push(proj.situation);
+    }
+    if (proj.action && proj.action !== proj.situation) {
+      bullets.push(proj.action);
+    }
+
+    // Add real calculated metrics as bullets
+    if (proj.metrics) {
+      for (const metric of proj.metrics.slice(0, TEMPLATE_RULES.content.maxBulletsPerRole - bullets.length)) {
+        if (!bullets.some(b => b.includes(metric))) {
+          bullets.push(metric);
+        }
+      }
+    }
+
+    const formattedBullets = bullets
+      .slice(0, TEMPLATE_RULES.content.maxBulletsPerRole)
+      .map(b => `  ${TEMPLATE_RULES.content.bulletSymbol} ${b}`)
+      .join('\n');
+
+    entries.push(`${titleLine}\n${formattedBullets}`);
+  }
+
+  return `${header}\n${separator}\n${entries.join('\n\n')}`;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // HTML BUILDERS (for rendered resume with exact font/size/spacing)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function wrapInHTMLDocument(body: string, title: string): string {
   // ══════════════════════════════════════════════════════════════════════════
-  // Jake's Resume Template — exact CSS translation of the LaTeX spacing
+  // Resume Template — CSS spacing rules
   //
-  // Key LaTeX spacing values translated to CSS:
-  //   \vspace{-4pt} before section header → margin-top: -4pt (≈ -0.055in)
-  //   \vspace{-5pt} after titlerule     → margin-bottom: -5pt
-  //   \vspace{-2pt} before subheading   → margin-top: -2pt
-  //   \vspace{-7pt} after subheading    → margin-bottom: -7pt
-  //   \vspace{-2pt} after resumeItem    → margin-bottom: -2pt
-  //   \vspace{-5pt} after itemListEnd   → margin-bottom: -5pt
-  //   \vspace{1pt} after name           → margin-bottom: 1pt
-  //   leftmargin=0.15in for lists       → padding-left: 0.15in
-  //   oddsidemargin -0.5in + default 1in = 0.5in effective margin
-  //   topmargin -0.5in + default 1in = 0.5in effective top margin
+  // Spacing values:
+  //   -4pt margin-top before section header
+  //   -5pt margin-bottom after section rule
+  //   -2pt margin-top before subheading
+  //   -7pt margin-bottom after subheading
+  //   -2pt margin-bottom after each bullet item
+  //   -5pt margin-bottom after item list end
+  //   1pt margin-bottom after name
+  //   0.15in left padding for lists
+  //   0.5in effective page margins
   // ══════════════════════════════════════════════════════════════════════════
   return `<!DOCTYPE html>
 <html lang="en">
@@ -955,8 +1004,8 @@ function wrapInHTMLDocument(body: string, title: string): string {
     padding: 0.5in;
   }
 
-  /* ─── Name: \\Huge \\scshape centered ─── */
-  .jake-name {
+  /* ─── Name: large, small-caps, centered ─── */
+  .resume-name {
     font-size: 22pt;
     font-weight: bold;
     text-align: center;
@@ -965,17 +1014,17 @@ function wrapInHTMLDocument(body: string, title: string): string {
     margin-bottom: 1pt;
   }
 
-  /* ─── Contact: \\small, pipe-separated, centered ─── */
-  .jake-contact {
+  /* ─── Contact: small, pipe-separated, centered ─── */
+  .resume-contact {
     font-size: 9.5pt;
     text-align: center;
     margin-bottom: 0;
   }
-  .jake-contact a { color: #000; text-decoration: underline; }
-  .jake-contact .sep { margin: 0 4pt; }
+  .resume-contact a { color: #000; text-decoration: underline; }
+  .resume-contact .sep { margin: 0 4pt; }
 
-  /* ─── Section header: \\vspace{-4pt} \\scshape\\large + \\titlerule + \\vspace{-5pt} ─── */
-  .jake-section {
+  /* ─── Section header: bold uppercase with bottom rule, tight spacing ─── */
+  .resume-section {
     font-size: 12pt;
     font-weight: bold;
     font-variant: small-caps;
@@ -987,52 +1036,52 @@ function wrapInHTMLDocument(body: string, title: string): string {
     margin-bottom: 0pt;
   }
 
-  /* ─── Subheading list: leftmargin=0.15in, label={} ─── */
-  .jake-subheading-list {
+  /* ─── Subheading list: indented, no bullets ─── */
+  .resume-subheading-list {
     list-style: none;
     padding-left: 0.15in;
   }
 
-  /* ─── Subheading entry: \\vspace{-2pt} before, \\vspace{-7pt} after
+  /* ─── Subheading entry: tight vertical spacing
        Two rows: bold title + date(right), italic subtitle + location(right) ─── */
-  .jake-subheading {
+  .resume-subheading {
     margin-top: 2pt;
     margin-bottom: 0;
   }
-  .jake-subheading-row {
+  .resume-subheading-row {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
     line-height: 1.3;
   }
-  .jake-subheading-row:first-child {
+  .resume-subheading-row:first-child {
     font-weight: bold;
     font-size: 10.5pt;
   }
-  .jake-subheading-row:last-child {
+  .resume-subheading-row:last-child {
     font-style: italic;
     font-size: 9.5pt;
   }
-  .jake-subheading-right {
+  .resume-subheading-right {
     text-align: right;
     white-space: nowrap;
     font-size: 10pt;
   }
-  .jake-subheading-right-sm {
+  .resume-subheading-right-sm {
     text-align: right;
     white-space: nowrap;
     font-size: 9.5pt;
     font-style: italic;
   }
 
-  /* ─── Bullet items: \\vspace{-2pt} after each, small font ─── */
-  .jake-items {
+  /* ─── Bullet items: tight spacing, small font ─── */
+  .resume-items {
     list-style: disc;
     padding-left: 0.35in;
     margin-top: 0;
     margin-bottom: 0;
   }
-  .jake-items li {
+  .resume-items li {
     font-size: 10pt;
     line-height: 1.25;
     margin-bottom: 0;
@@ -1040,13 +1089,13 @@ function wrapInHTMLDocument(body: string, title: string): string {
     padding-bottom: 0;
   }
 
-  /* ─── Item list end: \\vspace{-5pt} ─── */
-  .jake-items-end {
+  /* ─── Item list end: negative bottom margin for tightness ─── */
+  .resume-items-end {
     margin-bottom: -2pt;
   }
 
   /* ─── Project heading: bold name | italic tech, date right ─── */
-  .jake-project-row {
+  .resume-project-row {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
@@ -1054,30 +1103,30 @@ function wrapInHTMLDocument(body: string, title: string): string {
     margin-bottom: 0;
     font-size: 10.5pt;
   }
-  .jake-project-name { font-weight: bold; }
-  .jake-project-tech { font-style: italic; font-weight: normal; }
-  .jake-project-date { font-size: 10pt; white-space: nowrap; }
+  .resume-project-name { font-weight: bold; }
+  .resume-project-tech { font-style: italic; font-weight: normal; }
+  .resume-project-date { font-size: 10pt; white-space: nowrap; }
 
-  /* ─── Skills: bold label + colon + items, leftmargin=0.15in ─── */
-  .jake-skills {
+  /* ─── Skills: bold label + colon + items, indented ─── */
+  .resume-skills {
     list-style: none;
     padding-left: 0.15in;
     margin-top: 2pt;
   }
-  .jake-skills li {
+  .resume-skills li {
     font-size: 10pt;
     line-height: 1.4;
     margin-bottom: 0;
   }
-  .jake-skills-label { font-weight: bold; }
+  .resume-skills-label { font-weight: bold; }
 
   /* ─── Education ─── */
-  .jake-edu { margin-top: 2pt; }
+  .resume-edu { margin-top: 2pt; }
 
   @media print {
     body { padding: 0; max-width: none; }
-    .jake-section { page-break-after: avoid; }
-    .jake-subheading { page-break-inside: avoid; }
+    .resume-section { page-break-after: avoid; }
+    .resume-subheading { page-break-inside: avoid; }
   }
 </style>
 </head>
@@ -1088,7 +1137,7 @@ ${body}
 }
 
 function buildHTMLHeader(profile: ProfileData, job: JobContext): string {
-  // Jake's format: \Huge \scshape Name centered, then \small contact with | separators
+  // Format: large small-caps name centered, then small contact with | separators
   const contactParts = [profile.location, profile.email, profile.phone, profile.linkedin].filter((x): x is string => Boolean(x));
   const contactHtml = contactParts.map((part, i) => {
     const isLink = part.includes('linkedin') || part.includes('github') || part.includes('@');
@@ -1099,8 +1148,8 @@ function buildHTMLHeader(profile: ProfileData, job: JobContext): string {
   }).join(' ');
 
   return `
-<div class="jake-name">${escapeHtml(profile.name)}</div>
-<div class="jake-contact">${contactHtml}</div>`;
+<div class="resume-name">${escapeHtml(profile.name)}</div>
+<div class="resume-contact">${contactHtml}</div>`;
 }
 
 function buildHTMLSummary(profile: ProfileData, job: JobContext, matchedSkills: string[], keywords: { technical: string[]; domain: string[] }): string {
@@ -1118,29 +1167,26 @@ function buildHTMLSummary(profile: ProfileData, job: JobContext, matchedSkills: 
       `Seeking to contribute at ${job.company}.`;
   }
 
-  // Jake's format: section header with rule, then tight content
+  // Section header with rule, then tight content
   return `
-<div class="jake-section">Summary</div>
-<ul class="jake-subheading-list"><li style="font-size:10pt;line-height:1.3;margin-top:2pt;">${escapeHtml(summary)}</li></ul>`;
+<div class="resume-section">Summary</div>
+<ul class="resume-subheading-list"><li style="font-size:10pt;line-height:1.3;margin-top:2pt;">${escapeHtml(summary)}</li></ul>`;
 }
 
 function buildHTMLSkills(prioritizedSkills: string[], matchedSkills: string[]): string {
-  // Jake's format: \section{Technical Skills}
-  //   \textbf{Languages}{: item, item, item} \\
-  //   \textbf{Frameworks}{: item, item} \\
-  // leftmargin=0.15in, no bullets, bold category labels
+  // Group skills into categories with bold labels
 
   // Group skills into categories (best effort)
   const categories = categorizeSkills(prioritizedSkills);
   const rows = Object.entries(categories)
     .filter(([, items]) => items.length > 0)
     .map(([label, items]) =>
-      `    <li><span class="jake-skills-label">${escapeHtml(label)}</span>: ${items.map(escapeHtml).join(', ')}</li>`
+      `    <li><span class="resume-skills-label">${escapeHtml(label)}</span>: ${items.map(escapeHtml).join(', ')}</li>`
     ).join('\n');
 
   return `
-<div class="jake-section">Technical Skills</div>
-<ul class="jake-skills">
+<div class="resume-section">Technical Skills</div>
+<ul class="resume-skills">
 ${rows}
 </ul>`;
 }
@@ -1178,13 +1224,7 @@ function buildHTMLExperience(experiences: ProjectEntry[], keywords: { technical:
   const relevantKeywords = [...keywords.technical.slice(0, 5), ...keywords.domain.slice(0, 3)];
   const topExperiences = experiences.slice(0, TEMPLATE_RULES.content.maxExperiences);
 
-  // Jake's format:
-  //   \resumeSubheading{Role}{Date}{Company}{Location}
-  //   \resumeItemListStart
-  //     \resumeItem{bullet}
-  //   \resumeItemListEnd
-  //
-  // CSS: vspace{-2pt} before subheading, vspace{-7pt} after, vspace{-2pt} per item, vspace{-5pt} at list end
+  // CSS: tight spacing before subheading, after subheading, per item, at list end
 
   const entries = topExperiences.map(exp => {
     const role = exp.role || exp.title || 'Professional Role';
@@ -1229,60 +1269,106 @@ function buildHTMLExperience(experiences: ProjectEntry[], keywords: { technical:
       .map(b => `      <li>${escapeHtml(b)}</li>`)
       .join('\n');
 
-    // Jake's two-row subheading: bold title + date, then italic company + location
+    // Two-row subheading: bold title + date, then italic company + location
     return `
-  <li class="jake-subheading">
-    <div class="jake-subheading-row">
+  <li class="resume-subheading">
+    <div class="resume-subheading-row">
       <span>${escapeHtml(role)}</span>
-      <span class="jake-subheading-right">${escapeHtml(duration)}</span>
+      <span class="resume-subheading-right">${escapeHtml(duration)}</span>
     </div>
-    <div class="jake-subheading-row">
+    <div class="resume-subheading-row">
       <span>${escapeHtml(company)}</span>
-      <span class="jake-subheading-right-sm"></span>
+      <span class="resume-subheading-right-sm"></span>
     </div>
-    <ul class="jake-items jake-items-end">
+    <ul class="resume-items resume-items-end">
 ${bulletItems}
     </ul>
   </li>`;
   }).join('\n');
 
   return `
-<div class="jake-section">Experience</div>
-<ul class="jake-subheading-list">
+<div class="resume-section">Experience</div>
+<ul class="resume-subheading-list">
+${entries}
+</ul>`;
+}
+
+function buildHTMLProjects(
+  projects: ProjectEntry[],
+  keywords: { technical: string[]; action: string[]; domain: string[] }
+): string {
+  const topProjects = projects.slice(0, TEMPLATE_RULES.content.maxExperiences);
+
+  const entries = topProjects.map(proj => {
+    const name = proj.title || 'Project';
+    const techs = (proj.technologies || []).join(', ');
+    const duration = proj.duration || '';
+
+    // Build bullets from description + real calculated metrics
+    const bullets: string[] = [];
+    if (proj.situation) bullets.push(proj.situation);
+    if (proj.action && proj.action !== proj.situation) bullets.push(proj.action);
+    if (proj.metrics) {
+      for (const metric of proj.metrics.slice(0, TEMPLATE_RULES.content.maxBulletsPerRole - bullets.length)) {
+        if (!bullets.some(b => b.includes(metric))) {
+          bullets.push(metric);
+        }
+      }
+    }
+
+    const bulletItems = bullets
+      .slice(0, TEMPLATE_RULES.content.maxBulletsPerRole)
+      .map(b => `      <li>${escapeHtml(b)}</li>`)
+      .join('\n');
+
+    // Project format: bold name | italic tech, date right-aligned
+    return `
+  <li class="resume-subheading">
+    <div class="resume-project-row">
+      <span><span class="resume-project-name">${escapeHtml(name)}</span>${techs ? ` <span class="resume-project-tech">| ${escapeHtml(techs)}</span>` : ''}</span>
+      <span class="resume-project-date">${escapeHtml(duration)}</span>
+    </div>
+    <ul class="resume-items resume-items-end">
+${bulletItems}
+    </ul>
+  </li>`;
+  }).join('\n');
+
+  return `
+<div class="resume-section">Projects</div>
+<ul class="resume-subheading-list">
 ${entries}
 </ul>`;
 }
 
 function buildHTMLEducation(education: EducationEntry[]): string {
-  // Jake's format: \resumeSubheading{School}{Location}{Degree}{Dates}
   const entries = education.map(edu => {
     const degree = edu.degree + (edu.field ? ` in ${edu.field}` : '');
     return `
-  <li class="jake-subheading jake-edu">
-    <div class="jake-subheading-row">
+  <li class="resume-subheading resume-edu">
+    <div class="resume-subheading-row">
       <span>${escapeHtml(edu.institution)}</span>
-      <span class="jake-subheading-right">${escapeHtml(edu.year || '')}</span>
+      <span class="resume-subheading-right">${escapeHtml(edu.year || '')}</span>
     </div>
-    <div class="jake-subheading-row">
+    <div class="resume-subheading-row">
       <span>${escapeHtml(degree)}</span>
-      <span class="jake-subheading-right-sm">${edu.gpa ? `GPA: ${escapeHtml(edu.gpa)}` : ''}</span>
+      <span class="resume-subheading-right-sm">${edu.gpa ? `GPA: ${escapeHtml(edu.gpa)}` : ''}</span>
     </div>
   </li>`;
   }).join('\n');
 
   return `
-<div class="jake-section">Education</div>
-<ul class="jake-subheading-list">
+<div class="resume-section">Education</div>
+<ul class="resume-subheading-list">
 ${entries}
 </ul>`;
 }
 
 function buildHTMLCertifications(certs: string[]): string {
-  // Same tight format as skills section
   const items = certs.map(c => `    <li>${escapeHtml(c)}</li>`).join('\n');
   return `
-<div class="jake-section">Certifications</div>
-<ul class="jake-items" style="padding-left:0.35in;margin-top:2pt;">
+<div class="resume-section">Certifications</div>
+<ul class="resume-items" style="padding-left:0.35in;margin-top:2pt;">
 ${items}
 </ul>`;
 }

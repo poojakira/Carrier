@@ -199,28 +199,63 @@ function githubToProfile(gh: GitHubData): Partial<ProfileData> {
     }
   }
 
-  // Convert top repos to project entries
+  // ─── Calculate REAL aggregate metrics from GitHub data ───────────────────
+  const totalStars = gh.topRepos.reduce((sum, r) => sum + r.stars, 0);
+  const totalForks = gh.topRepos.reduce((sum, r) => sum + r.forks, 0);
+  const numLanguages = gh.languages.length;
+  const topRepoStars = gh.topRepos.length > 0 ? Math.max(...gh.topRepos.map(r => r.stars)) : 0;
+  const totalBytes = gh.languages.reduce((sum, l) => sum + l.bytes, 0);
+  const estimatedLinesOfCode = Math.round(totalBytes / 50);
+  const repoCount = gh.topRepos.length;
+
+  // Format lines of code with commas for readability
+  const formatNumber = (n: number): string => n.toLocaleString('en-US');
+
+  // ─── Convert top repos to project entries with REAL calculated metrics ───
   const projects: ProjectEntry[] = gh.topRepos
     .filter(r => r.description || r.stars > 0)
     .slice(0, 6)
-    .map(repo => ({
-      title: repo.name.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-      role: 'Developer',
-      company: 'Open Source',
-      duration: `Updated ${new Date(repo.updatedAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`,
-      situation: repo.description || `Open source ${repo.language} project`,
-      task: `Build and maintain ${repo.name}`,
-      action: `Developed ${repo.description || repo.name} using ${repo.language}${repo.topics.length > 0 ? `, ${repo.topics.slice(0, 3).join(', ')}` : ''}`,
-      result: [
-        repo.stars > 0 ? `${repo.stars} GitHub stars` : '',
-        repo.forks > 0 ? `${repo.forks} forks` : '',
-      ].filter(Boolean).join(', ') || 'Active open source contribution',
-      metrics: [
-        repo.stars > 0 ? `${repo.stars} stars` : '',
-        repo.forks > 0 ? `${repo.forks} forks` : '',
-      ].filter(Boolean),
-      technologies: [repo.language, ...repo.topics.slice(0, 4)].filter(Boolean),
-    }));
+    .map((repo, index) => {
+      // Calculate per-repo language bytes (estimate from proportion)
+      const repoLang = repo.language;
+      const repoLangEntry = repoLang ? gh.languages.find(l => l.name === repoLang) : undefined;
+      const repoLangBytes = repoLangEntry ? repoLangEntry.bytes : 0;
+      const repoEstimatedLines = Math.round(repoLangBytes / 50 / repoCount); // rough per-repo estimate
+
+      // Build REAL metrics for this project entry
+      const metrics: string[] = [];
+      if (repo.stars > 0) metrics.push(`${formatNumber(repo.stars)} GitHub stars`);
+      if (repo.forks > 0) metrics.push(`${formatNumber(repo.forks)} forks`);
+      if (repoLang && repoEstimatedLines > 100) {
+        metrics.push(`${formatNumber(repoEstimatedLines)}+ lines of ${repoLang}`);
+      }
+
+      // First entry gets aggregate metrics as well
+      if (index === 0) {
+        if (totalStars > 0) metrics.push(`${formatNumber(totalStars)} total stars across ${repoCount} repositories`);
+        if (estimatedLinesOfCode > 1000) metrics.push(`${formatNumber(estimatedLinesOfCode)}+ estimated lines of code`);
+        if (numLanguages > 1) metrics.push(`${numLanguages} programming languages used`);
+        if (repoCount > 1) metrics.push(`${repoCount} open-source repositories`);
+      }
+
+      return {
+        title: repo.name.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        role: 'Developer',
+        company: 'Open Source',
+        duration: `Updated ${new Date(repo.updatedAt).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`,
+        situation: repo.description || `Open source ${repo.language} project`,
+        task: `Build and maintain ${repo.name}`,
+        action: `Developed ${repo.description || repo.name} using ${repo.language}${repo.topics.length > 0 ? `, ${repo.topics.slice(0, 3).join(', ')}` : ''}`,
+        result: [
+          repo.stars > 0 ? `${formatNumber(repo.stars)} GitHub stars` : '',
+          repo.forks > 0 ? `${formatNumber(repo.forks)} forks` : '',
+          repoLang && repoEstimatedLines > 100 ? `${formatNumber(repoEstimatedLines)}+ lines of ${repoLang}` : '',
+        ].filter(Boolean).join(', ') || 'Active open source contribution',
+        metrics,
+        technologies: [repo.language, ...repo.topics.slice(0, 4)].filter(Boolean),
+        isProject: true,
+      };
+    });
 
   // Parse README for additional info
   let summary = gh.bio || '';
