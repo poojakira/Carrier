@@ -9,7 +9,8 @@ import { parseResume } from '@/lib/resume-parser';
  * POST /api/profile/import
  * 
  * Two input methods:
- * 1. URLs: { githubUrl?, linkedinUrl? } — extracts profile from GitHub/LinkedIn
+ * 1. URLs: { githubUrl?, linkedinUrl?, yearsOfExperience?, targetRole?, workHistory?, achievements? }
+ *    — extracts profile from GitHub/LinkedIn and supplements with user-provided context
  * 2. Resume text: { resumeText } — parses an old resume into structured data
  * 
  * Both methods populate the user's CareerProfile with complete data
@@ -23,6 +24,10 @@ export async function POST(req: Request) {
       linkedinUrl?: string;
       resumeText?: string;
       mode: 'urls' | 'resume';
+      yearsOfExperience?: number;
+      targetRole?: string;
+      workHistory?: string;
+      achievements?: string;
     };
 
     if (body.mode === 'urls') {
@@ -41,9 +46,18 @@ export async function POST(req: Request) {
 
       // Merge extracted data into user profile
       const profileData = result.profile;
+
+      // Supplement profile with user-provided work history and achievements
+      if (body.workHistory) {
+        const supplementary = buildSupplementaryText(body.workHistory, body.achievements);
+        profileData.summary = profileData.summary
+          ? `${profileData.summary}\n\n${supplementary}`
+          : supplementary;
+      }
+
       const existing = await db.careerProfile.findUnique({ where: { userId: u.id } });
 
-      const updateData = {
+      const updateData: Record<string, unknown> = {
         headline: profileData.headline || existing?.headline || '',
         summary: profileData.summary || existing?.summary || '',
         location: profileData.location || existing?.location || '',
@@ -51,13 +65,21 @@ export async function POST(req: Request) {
         projectsJson: JSON.stringify(profileData.projects || []),
         educationJson: JSON.stringify(profileData.education || []),
         certificationsJson: JSON.stringify(profileData.certifications || []),
-        resumeText: buildResumeTextFromProfile(profileData),
+        resumeText: buildResumeTextFromProfile(profileData, body.workHistory, body.achievements),
       };
+
+      // Store new fields
+      if (body.yearsOfExperience !== undefined) {
+        updateData.yearsOfExperience = body.yearsOfExperience;
+      }
+      if (body.targetRole) {
+        updateData.targetRole = body.targetRole;
+      }
 
       const profile = await db.careerProfile.upsert({
         where: { userId: u.id },
         update: updateData,
-        create: { userId: u.id, ...updateData },
+        create: { userId: u.id, ...updateData } as never,
       });
 
       // Update user name if we got a better one
@@ -70,6 +92,8 @@ export async function POST(req: Request) {
         source: result.source,
         confidence: result.confidence,
         warnings: result.warnings,
+        yearsOfExperience: body.yearsOfExperience,
+        targetRole: body.targetRole,
       });
 
       return NextResponse.json({
@@ -100,7 +124,7 @@ export async function POST(req: Request) {
       const parsed = parseResume(body.resumeText);
       const existing = await db.careerProfile.findUnique({ where: { userId: u.id } });
 
-      const updateData = {
+      const updateData: Record<string, unknown> = {
         headline: parsed.headline || existing?.headline || '',
         summary: parsed.summary || existing?.summary || '',
         location: parsed.location || existing?.location || '',
@@ -111,10 +135,18 @@ export async function POST(req: Request) {
         resumeText: body.resumeText, // Store the original for reference
       };
 
+      // Store new fields if provided
+      if (body.yearsOfExperience !== undefined) {
+        updateData.yearsOfExperience = body.yearsOfExperience;
+      }
+      if (body.targetRole) {
+        updateData.targetRole = body.targetRole;
+      }
+
       const profile = await db.careerProfile.upsert({
         where: { userId: u.id },
         update: updateData,
-        create: { userId: u.id, ...updateData },
+        create: { userId: u.id, ...updateData } as never,
       });
 
       // Update user name if parsed
@@ -151,9 +183,29 @@ export async function POST(req: Request) {
   }
 }
 
+// ─── Helper: Build supplementary text from user-provided work history & achievements
+
+function buildSupplementaryText(workHistory?: string, achievements?: string): string {
+  const parts: string[] = [];
+  if (workHistory) {
+    parts.push('WORK EXPERIENCE:');
+    parts.push(workHistory);
+  }
+  if (achievements) {
+    parts.push('');
+    parts.push('KEY ACHIEVEMENTS:');
+    parts.push(achievements);
+  }
+  return parts.join('\n');
+}
+
 // ─── Helper: Build resume text from extracted profile ──────────────────────────
 
-function buildResumeTextFromProfile(profile: Partial<import('@/lib/resume-tailor').ProfileData>): string {
+function buildResumeTextFromProfile(
+  profile: Partial<import('@/lib/resume-tailor').ProfileData>,
+  workHistory?: string,
+  achievements?: string,
+): string {
   const sections: string[] = [];
 
   if (profile.name) sections.push(profile.name.toUpperCase());
@@ -186,6 +238,20 @@ function buildResumeTextFromProfile(profile: Partial<import('@/lib/resume-tailor
       }
       sections.push('');
     }
+  }
+
+  // Include user-provided work history if available
+  if (workHistory) {
+    sections.push('ADDITIONAL EXPERIENCE');
+    sections.push(workHistory);
+    sections.push('');
+  }
+
+  // Include user-provided achievements if available
+  if (achievements) {
+    sections.push('KEY ACHIEVEMENTS');
+    sections.push(achievements);
+    sections.push('');
   }
 
   if (profile.education?.length) {

@@ -2,7 +2,17 @@
 
 import { useState } from 'react';
 
-type ImportMethod = 'urls' | 'resume' | null;
+type GitHubAnalysis = {
+  reposCount: number;
+  languages: string[];
+  projects: string[];
+  name?: string;
+  headline?: string;
+  skillsCount: number;
+  experienceCount: number;
+  educationCount: number;
+};
+
 type ImportResult = {
   success: boolean;
   method: string;
@@ -10,27 +20,120 @@ type ImportResult = {
   warnings?: string[];
   source?: string;
   profile?: { name: string; headline: string; skillsCount: number; experienceCount: number; educationCount: number };
-  parsed?: { name: string; headline: string; skillsCount: number; experienceCount: number; educationCount: number; certificationsCount: number };
 };
 
-export default function ImportProfile() {
-  const [method, setMethod] = useState<ImportMethod>(null);
-  const [githubUrl, setGithubUrl] = useState('');
-  const [linkedinUrl, setLinkedinUrl] = useState('');
-  const [resumeText, setResumeText] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ImportResult | null>(null);
-  const [error, setError] = useState('');
+const YEARS_OPTIONS = [
+  { value: 0, label: '0–1 years' },
+  { value: 1, label: '1–2 years' },
+  { value: 2, label: '2–3 years' },
+  { value: 3, label: '3–5 years' },
+  { value: 5, label: '5–10 years' },
+  { value: 10, label: '10+ years' },
+];
 
-  async function handleImport() {
-    setLoading(true);
-    setError('');
-    setResult(null);
+export default function ImportProfile() {
+  // Wizard state
+  const [currentStep, setCurrentStep] = useState(1);
+
+  // Step 1
+  const [githubUrl, setGithubUrl] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysis, setAnalysis] = useState<GitHubAnalysis | null>(null);
+  const [step1Error, setStep1Error] = useState('');
+
+  // Step 2
+  const [yearsOfExperience, setYearsOfExperience] = useState<number | null>(null);
+  const [targetRole, setTargetRole] = useState('');
+  const [workHistory, setWorkHistory] = useState('');
+  const [achievements, setAchievements] = useState('');
+  const [linkedinUrl, setLinkedinUrl] = useState('');
+
+  // Step 3
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState<ImportResult | null>(null);
+  const [submitError, setSubmitError] = useState('');
+
+  // ─── Step 1: Analyze GitHub ────────────────────────────────────────────
+  async function handleAnalyzeGitHub() {
+    if (!githubUrl.trim()) return;
+    setAnalyzing(true);
+    setStep1Error('');
 
     try {
-      const body = method === 'urls'
-        ? { mode: 'urls', githubUrl: githubUrl.trim() || undefined, linkedinUrl: linkedinUrl.trim() || undefined }
-        : { mode: 'resume', resumeText };
+      // Extract username from GitHub URL
+      const match = githubUrl.trim().match(/github\.com\/([^\/\?#]+)/i);
+      if (!match) {
+        throw new Error('Please enter a valid GitHub URL (e.g., https://github.com/username)');
+      }
+      const username = match[1];
+
+      // Fetch public repos to analyze
+      const res = await fetch(`https://api.github.com/users/${username}/repos?per_page=100&sort=updated`);
+      if (!res.ok) {
+        if (res.status === 404) throw new Error('GitHub user not found. Please check the URL.');
+        throw new Error('Failed to fetch GitHub profile. Please try again.');
+      }
+
+      const repos = await res.json() as Array<{
+        name: string;
+        language: string | null;
+        fork: boolean;
+        description: string | null;
+        stargazers_count: number;
+      }>;
+
+      // Also fetch user profile
+      const userRes = await fetch(`https://api.github.com/users/${username}`);
+      const userData = userRes.ok ? await userRes.json() as { name?: string; bio?: string } : null;
+
+      // Analyze repos
+      const ownRepos = repos.filter(r => !r.fork);
+      const languages = [...new Set(ownRepos.map(r => r.language).filter(Boolean))] as string[];
+      const topProjects = ownRepos
+        .sort((a, b) => b.stargazers_count - a.stargazers_count)
+        .slice(0, 8)
+        .map(r => r.name + (r.description ? ` — ${r.description}` : ''));
+
+      setAnalysis({
+        reposCount: ownRepos.length,
+        languages,
+        projects: topProjects,
+        name: userData?.name || undefined,
+        headline: userData?.bio || undefined,
+        skillsCount: languages.length,
+        experienceCount: topProjects.length,
+        educationCount: 0,
+      });
+
+      setCurrentStep(2);
+    } catch (e) {
+      setStep1Error(e instanceof Error ? e.message : 'Analysis failed');
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
+  // ─── Step 2 → Step 3 ──────────────────────────────────────────────────
+  function handleProceedToConfirmation() {
+    if (yearsOfExperience === null || !targetRole.trim()) return;
+    setCurrentStep(3);
+  }
+
+  // ─── Step 3: Submit everything ─────────────────────────────────────────
+  async function handleGenerateResume() {
+    setSubmitting(true);
+    setSubmitError('');
+
+    try {
+      const body = {
+        mode: 'urls' as const,
+        githubUrl: githubUrl.trim(),
+        linkedinUrl: linkedinUrl.trim() || undefined,
+        yearsOfExperience: yearsOfExperience!,
+        targetRole: targetRole.trim(),
+        workHistory: workHistory.trim() || undefined,
+        achievements: achievements.trim() || undefined,
+      };
 
       const res = await fetch('/api/profile/import', {
         method: 'POST',
@@ -42,184 +145,30 @@ export default function ImportProfile() {
       if (!res.ok) throw new Error(data.error || 'Import failed');
       setResult(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Import failed');
+      setSubmitError(e instanceof Error ? e.message : 'Import failed');
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
-      const reader = new FileReader();
-      reader.onload = () => setResumeText(reader.result as string);
-      reader.readAsText(file);
-    } else if (file.type === 'application/pdf') {
-      // For PDF, instruct user to paste text (PDF parsing requires server-side lib)
-      setError('PDF upload detected. Please copy-paste the text content from your resume. Most PDF viewers support Select All → Copy.');
-    } else {
-      setError('Unsupported file type. Please upload a .txt file or paste your resume text.');
-    }
-  }
-
-  return (
-    <div className="content">
-      <div className="topbar">
-        <div>
-          <div className="eyebrow">Profile Setup</div>
-          <h1 className="h1">Import your profile</h1>
-          <div className="muted">
-            Choose how to provide your information. We&apos;ll generate an unrejectable, 100% keyword-matched resume for every job application.
-          </div>
-        </div>
-      </div>
-
-      {/* Method Selection */}
-      {!method && (
-        <div className="grid grid2" style={{ marginTop: 24 }}>
-          <button
-            className="card"
-            onClick={() => setMethod('urls')}
-            style={{ cursor: 'pointer', textAlign: 'left', border: '2px solid transparent' }}
-            onMouseEnter={e => (e.currentTarget.style.borderColor = '#333')}
-            onMouseLeave={e => (e.currentTarget.style.borderColor = 'transparent')}
-          >
-            <div style={{ fontSize: 32, marginBottom: 12 }}>🔗</div>
-            <h2>Option 1: GitHub &amp; LinkedIn URLs</h2>
-            <p className="muted" style={{ marginTop: 8 }}>
-              Provide your GitHub and/or LinkedIn profile URLs. We&apos;ll automatically extract your skills,
-              projects, experience, and education to build a complete professional profile.
-            </p>
-            <div className="pill good" style={{ marginTop: 12 }}>Automatic extraction</div>
-          </button>
-
-          <button
-            className="card"
-            onClick={() => setMethod('resume')}
-            style={{ cursor: 'pointer', textAlign: 'left', border: '2px solid transparent' }}
-            onMouseEnter={e => (e.currentTarget.style.borderColor = '#333')}
-            onMouseLeave={e => (e.currentTarget.style.borderColor = 'transparent')}
-          >
-            <div style={{ fontSize: 32, marginBottom: 12 }}>📄</div>
-            <h2>Option 2: Upload Old Resume</h2>
-            <p className="muted" style={{ marginTop: 8 }}>
-              Upload or paste your existing resume. We&apos;ll parse it into structured data and use it to
-              generate tailored, ATS-optimized resumes with 100% keyword coverage for each job.
-            </p>
-            <div className="pill good" style={{ marginTop: 12 }}>Instant parsing</div>
-          </button>
-        </div>
-      )}
-
-      {/* URLs Method */}
-      {method === 'urls' && !result && (
-        <div className="card" style={{ marginTop: 24 }}>
-          <button className="btn" onClick={() => setMethod(null)} style={{ marginBottom: 16 }}>← Back</button>
-          <h2>Enter your profile URLs</h2>
-          <p className="muted" style={{ marginBottom: 20 }}>
-            Provide at least one URL. Both together give the most complete profile.
-          </p>
-
-          <div className="form-grid">
-            <div>
-              <label className="label">GitHub Profile URL</label>
-              <input
-                className="input"
-                placeholder="https://github.com/yourusername"
-                value={githubUrl}
-                onChange={e => setGithubUrl(e.target.value)}
-              />
-              <div className="small muted" style={{ marginTop: 4 }}>
-                Extracts: repos, languages, contributions, technologies, projects
-              </div>
-            </div>
-            <div>
-              <label className="label">LinkedIn Profile URL</label>
-              <input
-                className="input"
-                placeholder="https://linkedin.com/in/yourprofile"
-                value={linkedinUrl}
-                onChange={e => setLinkedinUrl(e.target.value)}
-              />
-              <div className="small muted" style={{ marginTop: 4 }}>
-                Extracts: experience, skills, education, certifications, summary
-              </div>
-            </div>
-          </div>
-
-          {error && <div className="notice" style={{ marginTop: 16, color: '#c41' }}>{error}</div>}
-
-          <button
-            className="btn primary"
-            onClick={handleImport}
-            disabled={loading || (!githubUrl.trim() && !linkedinUrl.trim())}
-            style={{ marginTop: 20 }}
-          >
-            {loading ? 'Extracting profile data...' : 'Extract & Build Profile'}
-          </button>
-        </div>
-      )}
-
-      {/* Resume Method */}
-      {method === 'resume' && !result && (
-        <div className="card" style={{ marginTop: 24 }}>
-          <button className="btn" onClick={() => setMethod(null)} style={{ marginBottom: 16 }}>← Back</button>
-          <h2>Upload or paste your resume</h2>
-          <p className="muted" style={{ marginBottom: 20 }}>
-            We&apos;ll parse your resume into structured sections (experience, skills, education) and use it to
-            generate 100% keyword-matched, XYZ+STAR formatted resumes for each job you apply to.
-          </p>
-
-          <div style={{ marginBottom: 16 }}>
-            <label className="label">Upload resume file (.txt)</label>
-            <input
-              type="file"
-              accept=".txt,.text"
-              onChange={handleFileUpload}
-              style={{ marginTop: 4 }}
-            />
-          </div>
-
+  // ─── Success state ─────────────────────────────────────────────────────
+  if (result) {
+    return (
+      <div className="content">
+        <div className="topbar">
           <div>
-            <label className="label">Or paste resume text</label>
-            <textarea
-              className="textarea"
-              placeholder="Paste your full resume text here..."
-              value={resumeText}
-              onChange={e => setResumeText(e.target.value)}
-              style={{ minHeight: 300, fontFamily: 'monospace', fontSize: 13 }}
-            />
-            <div className="small muted" style={{ marginTop: 4 }}>
-              {resumeText.length > 0 ? `${resumeText.length} characters • ${resumeText.split('\n').length} lines` : 'Copy from your PDF, Word doc, or any text source'}
-            </div>
+            <div className="eyebrow">Profile Setup</div>
+            <h1 className="h1">Profile imported successfully!</h1>
           </div>
-
-          {error && <div className="notice" style={{ marginTop: 16, color: '#c41' }}>{error}</div>}
-
-          <button
-            className="btn primary"
-            onClick={handleImport}
-            disabled={loading || resumeText.trim().length < 50}
-            style={{ marginTop: 20 }}
-          >
-            {loading ? 'Parsing resume...' : 'Parse & Build Profile'}
-          </button>
         </div>
-      )}
 
-      {/* Results */}
-      {result && (
         <div className="card" style={{ marginTop: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
             <span style={{ fontSize: 32 }}>✅</span>
             <div>
-              <h2 style={{ margin: 0 }}>Profile imported successfully!</h2>
+              <h2 style={{ margin: 0 }}>Your profile is ready</h2>
               <div className="muted">
-                {result.method === 'url_extraction'
-                  ? `Extracted from ${result.source} (${result.confidence}% confidence)`
-                  : 'Parsed from uploaded resume'}
+                Extracted from {result.source} ({result.confidence}% confidence)
               </div>
             </div>
           </div>
@@ -230,19 +179,23 @@ export default function ImportProfile() {
               <div className="stack">
                 <div className="split">
                   <span>Name</span>
-                  <span className="pill">{(result.profile || result.parsed)?.name || '—'}</span>
+                  <span className="pill">{result.profile?.name || '—'}</span>
                 </div>
                 <div className="split">
                   <span>Skills</span>
-                  <span className="pill good">{(result.profile || result.parsed)?.skillsCount || 0} found</span>
+                  <span className="pill good">{result.profile?.skillsCount || 0} found</span>
                 </div>
                 <div className="split">
                   <span>Experience entries</span>
-                  <span className="pill good">{(result.profile || result.parsed)?.experienceCount || 0} found</span>
+                  <span className="pill good">{result.profile?.experienceCount || 0} found</span>
                 </div>
                 <div className="split">
-                  <span>Education</span>
-                  <span className="pill">{(result.profile || result.parsed)?.educationCount || 0} found</span>
+                  <span>Target role</span>
+                  <span className="pill">{targetRole}</span>
+                </div>
+                <div className="split">
+                  <span>Experience level</span>
+                  <span className="pill">{YEARS_OPTIONS.find(o => o.value === yearsOfExperience)?.label}</span>
                 </div>
               </div>
             </div>
@@ -257,56 +210,334 @@ export default function ImportProfile() {
             </div>
           </div>
 
-          {result.warnings && result.warnings.length > 0 && (
-            <div className="notice" style={{ marginTop: 16 }}>
-              <strong>Warnings:</strong>
-              {result.warnings.map((w, i) => <div key={i} className="small muted">{w}</div>)}
+          <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
+            <a href="/profile" className="btn primary">View &amp; Edit Profile</a>
+            <a href="/jobs" className="btn">Browse Jobs</a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="content">
+      <div className="topbar">
+        <div>
+          <div className="eyebrow">Profile Setup</div>
+          <h1 className="h1">Import your profile</h1>
+          <div className="muted">
+            Tell us about yourself step by step. We&apos;ll build an unrejectable resume for every application.
+          </div>
+        </div>
+      </div>
+
+      {/* Step Indicator */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginTop: 24, marginBottom: 32 }}>
+        <StepIndicator step={1} label="GitHub" current={currentStep} />
+        <StepConnector active={currentStep >= 2} />
+        <StepIndicator step={2} label="Details" current={currentStep} />
+        <StepConnector active={currentStep >= 3} />
+        <StepIndicator step={3} label="Confirm" current={currentStep} />
+      </div>
+
+      {/* ─── STEP 1: GitHub URL ──────────────────────────────────────── */}
+      {currentStep === 1 && (
+        <div className="card" style={{ marginTop: 0 }}>
+          <h2 style={{ marginBottom: 4 }}>Step 1: Connect your GitHub</h2>
+          <p className="muted" style={{ marginBottom: 24 }}>
+            We&apos;ll analyze your repositories to extract skills, languages, and projects automatically.
+          </p>
+
+          <div>
+            <label className="label" htmlFor="github-url">Enter your GitHub profile URL</label>
+            <input
+              id="github-url"
+              className="input"
+              placeholder="https://github.com/yourusername"
+              value={githubUrl}
+              onChange={e => setGithubUrl(e.target.value)}
+              disabled={analyzing}
+              style={{ maxWidth: 480 }}
+            />
+          </div>
+
+          {step1Error && (
+            <div className="notice" style={{ marginTop: 16, color: '#c41' }}>{step1Error}</div>
+          )}
+
+          {analyzing && (
+            <div style={{ marginTop: 20, display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span className="spinner" aria-hidden="true" style={{ display: 'inline-block', width: 18, height: 18, border: '2px solid #555', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}></span>
+              <span className="muted">Analyzing your repositories...</span>
             </div>
           )}
 
-          <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
-            <a href="/profile" className="btn primary">View & Edit Profile</a>
-            <a href="/jobs" className="btn">Browse Jobs</a>
-            <button className="btn" onClick={() => { setResult(null); setMethod(null); }}>Import Again</button>
+          {!analyzing && (
+            <button
+              className="btn primary"
+              onClick={handleAnalyzeGitHub}
+              disabled={!githubUrl.trim()}
+              style={{ marginTop: 20 }}
+            >
+              Analyze my GitHub
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ─── STEP 2: Additional Information ──────────────────────────── */}
+      {currentStep === 2 && (
+        <div className="card" style={{ marginTop: 0 }}>
+          {/* Show what was found from GitHub */}
+          {analysis && (
+            <div style={{ marginBottom: 24, padding: 16, background: '#1a1a2e', borderRadius: 8, border: '1px solid #2a2a3e' }}>
+              <div className="kicker" style={{ marginBottom: 8 }}>GitHub Analysis Complete</div>
+              <div className="stack">
+                <div className="split">
+                  <span>Repositories found</span>
+                  <span className="pill good">{analysis.reposCount}</span>
+                </div>
+                <div className="split">
+                  <span>Languages detected</span>
+                  <span className="pill good">{analysis.languages.length}</span>
+                </div>
+                <div className="split">
+                  <span>Languages</span>
+                  <span className="muted" style={{ fontSize: 13 }}>{analysis.languages.join(', ')}</span>
+                </div>
+                <div className="split">
+                  <span>Top projects</span>
+                  <span className="pill">{analysis.projects.length} detected</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <h2 style={{ marginBottom: 4 }}>Step 2: Tell us more about yourself</h2>
+          <p className="muted" style={{ marginBottom: 24 }}>
+            This information helps us generate more targeted, higher-quality resumes.
+          </p>
+
+          <div className="form-grid" style={{ display: 'grid', gap: 20 }}>
+            <div>
+              <label className="label" htmlFor="years-exp">Years of experience *</label>
+              <select
+                id="years-exp"
+                className="input"
+                value={yearsOfExperience ?? ''}
+                onChange={e => setYearsOfExperience(e.target.value ? Number(e.target.value) : null)}
+                style={{ maxWidth: 280 }}
+              >
+                <option value="">Select...</option>
+                {YEARS_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="label" htmlFor="target-role">What role are you applying for? *</label>
+              <input
+                id="target-role"
+                className="input"
+                placeholder="e.g., Senior Frontend Engineer, Full Stack Developer, Staff SRE"
+                value={targetRole}
+                onChange={e => setTargetRole(e.target.value)}
+                style={{ maxWidth: 480 }}
+              />
+            </div>
+
+            <div>
+              <label className="label" htmlFor="work-history">
+                Describe your work experience
+                <span className="muted" style={{ fontWeight: 400, marginLeft: 8, fontSize: 12 }}>Strongly recommended</span>
+              </label>
+              <textarea
+                id="work-history"
+                className="textarea"
+                placeholder="Companies you've worked at, roles held, what you built, team sizes, scale of systems you operated..."
+                value={workHistory}
+                onChange={e => setWorkHistory(e.target.value)}
+                style={{ minHeight: 120 }}
+              />
+            </div>
+
+            <div>
+              <label className="label" htmlFor="achievements">
+                Key achievements
+                <span className="muted" style={{ fontWeight: 400, marginLeft: 8, fontSize: 12 }}>Strongly recommended</span>
+              </label>
+              <textarea
+                id="achievements"
+                className="textarea"
+                placeholder="Top achievements with numbers — users served, revenue impact, performance improvements, cost savings, uptime, release velocity..."
+                value={achievements}
+                onChange={e => setAchievements(e.target.value)}
+                style={{ minHeight: 120 }}
+              />
+            </div>
+
+            <div>
+              <label className="label" htmlFor="linkedin-url">
+                LinkedIn URL
+                <span className="muted" style={{ fontWeight: 400, marginLeft: 8, fontSize: 12 }}>Optional</span>
+              </label>
+              <input
+                id="linkedin-url"
+                className="input"
+                placeholder="https://linkedin.com/in/yourprofile"
+                value={linkedinUrl}
+                onChange={e => setLinkedinUrl(e.target.value)}
+                style={{ maxWidth: 480 }}
+              />
+            </div>
+          </div>
+
+          <div style={{ marginTop: 24, display: 'flex', gap: 12 }}>
+            <button className="btn" onClick={() => setCurrentStep(1)}>← Back</button>
+            <button
+              className="btn primary"
+              onClick={handleProceedToConfirmation}
+              disabled={yearsOfExperience === null || !targetRole.trim()}
+            >
+              Continue →
+            </button>
+          </div>
+
+          {(yearsOfExperience === null || !targetRole.trim()) && (
+            <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+              * Years of experience and target role are required to continue.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── STEP 3: Confirmation ────────────────────────────────────── */}
+      {currentStep === 3 && (
+        <div className="card" style={{ marginTop: 0 }}>
+          <h2 style={{ marginBottom: 4 }}>Step 3: Review &amp; Generate</h2>
+          <p className="muted" style={{ marginBottom: 24 }}>
+            Review your profile summary. Once you confirm, we&apos;ll extract the full profile and generate your career data.
+          </p>
+
+          <div style={{ display: 'grid', gap: 16 }}>
+            <div style={{ padding: 16, background: '#1a1a2e', borderRadius: 8, border: '1px solid #2a2a3e' }}>
+              <div className="kicker" style={{ marginBottom: 12 }}>Profile Summary</div>
+              <div className="stack">
+                <div className="split">
+                  <span>GitHub</span>
+                  <span className="muted" style={{ fontSize: 13 }}>{githubUrl}</span>
+                </div>
+                {linkedinUrl && (
+                  <div className="split">
+                    <span>LinkedIn</span>
+                    <span className="muted" style={{ fontSize: 13 }}>{linkedinUrl}</span>
+                  </div>
+                )}
+                <div className="split">
+                  <span>Target role</span>
+                  <span className="pill">{targetRole}</span>
+                </div>
+                <div className="split">
+                  <span>Experience</span>
+                  <span className="pill">{YEARS_OPTIONS.find(o => o.value === yearsOfExperience)?.label}</span>
+                </div>
+                {analysis && (
+                  <>
+                    <div className="split">
+                      <span>Repos analyzed</span>
+                      <span className="pill good">{analysis.reposCount}</span>
+                    </div>
+                    <div className="split">
+                      <span>Languages</span>
+                      <span className="muted" style={{ fontSize: 13 }}>{analysis.languages.join(', ')}</span>
+                    </div>
+                  </>
+                )}
+                {workHistory && (
+                  <div className="split">
+                    <span>Work history</span>
+                    <span className="pill good">Provided</span>
+                  </div>
+                )}
+                {achievements && (
+                  <div className="split">
+                    <span>Achievements</span>
+                    <span className="pill good">Provided</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {submitError && (
+            <div className="notice" style={{ marginTop: 16, color: '#c41' }}>{submitError}</div>
+          )}
+
+          <div style={{ marginTop: 24, display: 'flex', gap: 12 }}>
+            <button className="btn" onClick={() => setCurrentStep(2)}>← Back</button>
+            <button
+              className="btn primary"
+              onClick={handleGenerateResume}
+              disabled={submitting}
+            >
+              {submitting ? 'Generating your resume...' : 'Generate my resume'}
+            </button>
           </div>
         </div>
       )}
 
-      {/* Info section */}
-      <div className="card" style={{ marginTop: 24 }}>
-        <div className="kicker">How the 100% match works</div>
-        <h3>Unrejectable resume generation</h3>
-        <div className="stack" style={{ marginTop: 12 }}>
-          <div className="split">
-            <span>1. Extract your verified skills &amp; experience</span>
-            <span className="pill">from GitHub/LinkedIn/resume</span>
-          </div>
-          <div className="split">
-            <span>2. Parse job description keywords</span>
-            <span className="pill">technical + action + domain</span>
-          </div>
-          <div className="split">
-            <span>3. Reorder experience by relevance</span>
-            <span className="pill">most relevant first</span>
-          </div>
-          <div className="split">
-            <span>4. Format every bullet as XYZ + STAR combined</span>
-            <span className="pill good">proven format</span>
-          </div>
-          <div className="split">
-            <span>5. Inject ALL missing keywords into correct sections</span>
-            <span className="pill good">100% ATS match</span>
-          </div>
-          <div className="split">
-            <span>6. Apply template rules</span>
-            <span className="pill">Calibri 10.5pt • 0.6in margins • max 2 pages</span>
-          </div>
-        </div>
-        <div className="notice" style={{ marginTop: 16 }}>
-          <strong>Truthfulness contract:</strong> The system reorders and rewrites your verified evidence for maximum impact,
-          but never invents employment, metrics, credentials, skills, or experience.
-        </div>
-      </div>
+      {/* CSS for spinner animation */}
+      <style>{`
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
+  );
+}
+
+// ─── Step Indicator Components ──────────────────────────────────────────────
+
+function StepIndicator({ step, label, current }: { step: number; label: string; current: number }) {
+  const isActive = current >= step;
+  const isCurrent = current === step;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+      <div
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: 14,
+          fontWeight: 600,
+          background: isActive ? '#4f46e5' : '#2a2a3e',
+          color: isActive ? '#fff' : '#888',
+          border: isCurrent ? '2px solid #818cf8' : '2px solid transparent',
+          transition: 'all 0.2s',
+        }}
+      >
+        {current > step ? '✓' : step}
+      </div>
+      <span style={{ fontSize: 12, color: isActive ? '#e0e0e0' : '#666' }}>{label}</span>
+    </div>
+  );
+}
+
+function StepConnector({ active }: { active: boolean }) {
+  return (
+    <div
+      style={{
+        flex: 1,
+        height: 2,
+        background: active ? '#4f46e5' : '#2a2a3e',
+        margin: '0 8px',
+        marginBottom: 20,
+        transition: 'background 0.2s',
+      }}
+    />
   );
 }

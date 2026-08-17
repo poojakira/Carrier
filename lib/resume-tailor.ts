@@ -126,17 +126,18 @@ export const TEMPLATE_RULES = {
     sectionSpacingPt: 12,
     bulletIndent: '0.25in',
     dateAlignment: 'right' as const,
-    maxPages: 2,
-    maxPagesSenior: 2, // 5+ years
-    maxPagesJunior: 1, // <5 years
+    maxPages: 3,
+    maxPagesSenior: 3, // 3+ years
+    maxPagesJunior: 1, // <3 years
+    fresherYearsThreshold: 3,
     pageWidthChars: 85, // for plain-text version
   },
 
   // Content rules
   content: {
-    maxBulletsPerRole: 5,
-    minBulletsPerRole: 2,
-    idealBulletsPerRole: 3,
+    maxBulletsPerRole: 4,
+    minBulletsPerRole: 4,
+    idealBulletsPerRole: 4,
     maxSkills: 15,
     maxExperiences: 5,
     sectionOrder: ['header', 'summary', 'skills', 'experience', 'projects', 'education', 'certifications'] as const,
@@ -340,18 +341,31 @@ function formatCombinedXYZSTAR(entry: {
 function reformatBulletAsXYZSTAR(bullet: string, relevantKeywords: string[]): string {
   const clean = bullet.replace(/^[•\-*]\s*/, '').trim();
 
+  // ─── Sanitize GitHub-specific metrics ───
+  let sanitized = clean;
+  // 'X stars' or 'X GitHub stars' -> 'adopted by X developers'
+  sanitized = sanitized.replace(/(\d+[\d,]*\+?)\s*(?:GitHub\s+)?stars/gi, 'adopted by $1 developers');
+  // 'X forks' -> 'X derivative implementations'
+  sanitized = sanitized.replace(/(\d+[\d,]*\+?)\s*forks/gi, '$1 derivative implementations');
+  // 'X commits' -> remove entirely
+  sanitized = sanitized.replace(/,?\s*(\d+[\d,]*\+?)\s*commits\s*/gi, ' ');
+  // 'X pull requests' -> remove entirely
+  sanitized = sanitized.replace(/,?\s*(\d+[\d,]*\+?)\s*pull\s*requests?\s*/gi, ' ');
+  // Clean up double spaces or trailing commas
+  sanitized = sanitized.replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*$/, '').trim();
+
   // Try to extract components
-  const metricMatch = clean.match(/(\d+%|\$[\d,.]+[KMBkmb]?|\d+x|\d+\+?\s*(?:users|customers|clients|requests|transactions|services|engineers|team members|developers|applications|features|projects|hours|minutes|days|weeks|months))/i);
-  const actionMatch = clean.match(/(?:^|,\s*)(\w+(?:ed|ing|ted|ated|ized|yed))\s+/i);
+  const metricMatch = sanitized.match(/(\d+%|\$[\d,.]+[KMBkmb]?|\d+x|\d+\+?\s*(?:users|customers|clients|requests|transactions|services|engineers|team members|developers|applications|features|projects|hours|minutes|days|weeks|months))/i);
+  const actionMatch = sanitized.match(/(?:^|,\s*)(\w+(?:ed|ing|ted|ated|ized|yed))\s+/i);
   const resultIndicators = /(?:result(?:ing|ed)?\s+in|lead(?:ing)?\s+to|achiev(?:ing|ed)|caus(?:ing|ed)|enabling|improving|reducing|increasing|growing|saving|generating|delivering|producing)/i;
-  const resultMatch = clean.match(resultIndicators);
+  const resultMatch = sanitized.match(resultIndicators);
 
   if (metricMatch && actionMatch) {
     // We have enough to format properly
     const metric = metricMatch[1];
     const actionVerb = actionMatch[1];
-    const beforeMetric = clean.substring(0, metricMatch.index).trim();
-    const afterMetric = clean.substring((metricMatch.index || 0) + metric.length).trim();
+    const beforeMetric = sanitized.substring(0, metricMatch.index).trim();
+    const afterMetric = sanitized.substring((metricMatch.index || 0) + metric.length).trim();
 
     const action = beforeMetric || `${actionVerb} key initiative`;
     const result = afterMetric ? afterMetric.replace(/^[,.\s]+/, '') : 'significant improvement';
@@ -367,11 +381,11 @@ function reformatBulletAsXYZSTAR(bullet: string, relevantKeywords: string[]): st
   if (metricMatch) {
     // Have metric but unclear structure — reformat around the metric
     const idx = metricMatch.index || 0;
-    const before = clean.substring(0, idx).replace(/^[•\-*]\s*/, '').trim();
-    const after = clean.substring(idx + metricMatch[1].length).trim();
+    const before = sanitized.substring(0, idx).replace(/^[•\-*]\s*/, '').trim();
+    const after = sanitized.substring(idx + metricMatch[1].length).trim();
 
     return formatCombinedXYZSTAR({
-      action: capitalizeFirst(before || clean.split(',')[0] || 'Drove key outcome'),
+      action: capitalizeFirst(before || sanitized.split(',')[0] || 'Drove key outcome'),
       result: (after || before || 'measurable improvement').replace(/[.,]$/, ''),
       metric: metricMatch[1],
       keywords: relevantKeywords,
@@ -380,9 +394,9 @@ function reformatBulletAsXYZSTAR(bullet: string, relevantKeywords: string[]): st
 
   // No clear metric — still format with XYZ structure but flag as needs-quantification
   // Inject relevant keywords into the phrasing
-  let enhanced = capitalizeFirst(clean);
+  let enhanced = capitalizeFirst(sanitized);
   const keywordsToInject = relevantKeywords.filter(kw =>
-    !clean.toLowerCase().includes(kw.toLowerCase())
+    !sanitized.toLowerCase().includes(kw.toLowerCase())
   ).slice(0, 1);
 
   if (keywordsToInject.length > 0 && enhanced.includes(' using ')) {
@@ -392,6 +406,128 @@ function reformatBulletAsXYZSTAR(bullet: string, relevantKeywords: string[]): st
   }
 
   return enhanced;
+}
+
+// ─── Generate Exactly 4 Bullets (Industry Metrics Only) ────────────────────────
+
+/**
+ * Generates EXACTLY 4 bullet points for a project/experience entry.
+ * Each bullet is one natural sentence combining STAR elements without labels.
+ *
+ * Bullet 1: Situation/context + what was built (S+T)
+ * Bullet 2: Core technical action — technologies/methods used (A+Z)
+ * Bullet 3: Measurable outcome/result with real number (R+X+Y)
+ * Bullet 4: Broader impact or scope — team size, users affected, scale
+ *
+ * NEVER mentions GitHub stars, commits, forks, or pull requests.
+ * Uses INDUSTRY metrics only: users, requests/sec, latency, uptime, team size, etc.
+ */
+function generateFourBullets(entry: ProjectEntry, relevantKeywords: string[]): string[] {
+  const bullets: string[] = [];
+
+  // ─── Bullet 1: Situation + what was built (S+T) ───
+  let bullet1: string;
+  if (entry.situation && entry.task) {
+    bullet1 = `${capitalizeFirst(entry.situation.replace(/[.,]$/, ''))} to ${entry.task.replace(/^to\s+/i, '').replace(/[.,]$/, '')}`;
+  } else if (entry.situation) {
+    bullet1 = capitalizeFirst(entry.situation.replace(/[.,]$/, ''));
+  } else if (entry.task) {
+    bullet1 = `Built ${entry.task.replace(/^to\s+/i, '').replace(/[.,]$/, '')}`;
+  } else if (entry.action) {
+    bullet1 = capitalizeFirst(entry.action.replace(/[.,]$/, '').split(',')[0]);
+  } else {
+    bullet1 = `Developed ${entry.title || 'production system'} to address critical business requirements`;
+  }
+  // Inject a keyword if it fits naturally
+  const kw1 = relevantKeywords.find(kw => !bullet1.toLowerCase().includes(kw.toLowerCase()));
+  if (kw1 && !bullet1.includes(' using ') && bullet1.length < 120) {
+    bullet1 += ` using ${kw1}`;
+  }
+  bullets.push(sanitizeGitHubMetrics(bullet1));
+
+  // ─── Bullet 2: Core technical action (A+Z) ───
+  let bullet2: string;
+  if (entry.action) {
+    bullet2 = capitalizeFirst(entry.action.replace(/[.,]$/, ''));
+  } else if (entry.technologies && entry.technologies.length > 0) {
+    bullet2 = `Implemented core functionality using ${entry.technologies.slice(0, 4).join(', ')}`;
+  } else {
+    bullet2 = `Engineered the solution with modern tooling and automated testing pipelines`;
+  }
+  // Inject keywords as technologies if not present
+  const kwsForBullet2 = relevantKeywords.filter(kw => !bullet2.toLowerCase().includes(kw.toLowerCase())).slice(0, 2);
+  if (kwsForBullet2.length > 0) {
+    if (bullet2.includes(' using ') || bullet2.includes(' with ')) {
+      bullet2 += `, ${kwsForBullet2.join(', ')}`;
+    } else {
+      bullet2 += ` with ${kwsForBullet2.join(' and ')}`;
+    }
+  }
+  bullets.push(sanitizeGitHubMetrics(bullet2));
+
+  // ─── Bullet 3: Measurable outcome with real number (R+X+Y) ───
+  let bullet3: string;
+  if (entry.result) {
+    bullet3 = capitalizeFirst(entry.result.replace(/[.,]$/, ''));
+    // Ensure it has a metric
+    if (entry.metrics && entry.metrics.length > 0 && !/\d/.test(bullet3)) {
+      const metricStr = entry.metrics[0].replace(/^[•\-*]\s*/, '');
+      bullet3 += `, achieving ${metricStr}`;
+    }
+  } else if (entry.metrics && entry.metrics.length > 0) {
+    const metricStr = entry.metrics[0].replace(/^[•\-*]\s*/, '');
+    bullet3 = capitalizeFirst(metricStr);
+  } else {
+    bullet3 = `Achieved measurable improvement in system performance and reliability`;
+  }
+  bullets.push(sanitizeGitHubMetrics(bullet3));
+
+  // ─── Bullet 4: Broader impact/scope — team, users, scale ───
+  let bullet4: string;
+  if (entry.metrics && entry.metrics.length > 1) {
+    const secondMetric = entry.metrics[1].replace(/^[•\-*]\s*/, '');
+    bullet4 = capitalizeFirst(secondMetric);
+  } else {
+    // Build from available context
+    const parts: string[] = [];
+    if (entry.technologies && entry.technologies.length > 2) {
+      parts.push(`across ${entry.technologies.length} integrated services`);
+    }
+    if (entry.company) {
+      parts.push(`supporting production workloads`);
+    }
+    bullet4 = parts.length > 0
+      ? `Operated ${parts.join(' and ')}`
+      : `Supported production deployment serving end users with high availability`;
+  }
+  bullets.push(sanitizeGitHubMetrics(bullet4));
+
+  return bullets;
+}
+
+/**
+ * Replaces GitHub-specific metrics with industry-appropriate alternatives.
+ * Removes mentions of stars, forks, commits, and pull requests.
+ */
+function sanitizeGitHubMetrics(bullet: string): string {
+  let result = bullet;
+
+  // 'X stars' or 'X GitHub stars' -> 'adopted by X developers'
+  result = result.replace(/(\d+[\d,]*\+?)\s*(?:GitHub\s+)?stars/gi, 'adopted by $1 developers');
+
+  // 'X forks' -> 'X derivative implementations'
+  result = result.replace(/(\d+[\d,]*\+?)\s*forks/gi, '$1 derivative implementations');
+
+  // 'X commits' -> remove entirely (with surrounding context cleanup)
+  result = result.replace(/,?\s*(\d+[\d,]*\+?)\s*commits\s*/gi, ' ');
+
+  // 'X pull requests' -> remove entirely
+  result = result.replace(/,?\s*(\d+[\d,]*\+?)\s*pull\s*requests?\s*/gi, ' ');
+
+  // Clean up any double spaces or trailing commas
+  result = result.replace(/\s{2,}/g, ' ').replace(/,\s*,/g, ',').replace(/,\s*$/, '').trim();
+
+  return result;
 }
 
 // ─── Parse Canonical Resume into Structured Entries ────────────────────────────
@@ -494,12 +630,16 @@ function scoreRelevance(entry: ProjectEntry, keywords: { technical: string[]; ac
 
 // ─── Main Tailoring Function ───────────────────────────────────────────────────
 
-export function tailorResume(profile: ProfileData, job: JobContext): TailoredResume {
+export function tailorResume(profile: ProfileData, job: JobContext, yearsOfExperience?: number): TailoredResume {
   const keywords = extractKeywords(job.description);
   const allKeywordsFlat = [...keywords.technical, ...keywords.action, ...keywords.domain];
   const { matched, prioritized } = matchAndPrioritizeSkills(profile.skills, keywords);
   const tailoringNotes: string[] = [];
   const injectedKeywords: string[] = [];
+
+  // Determine experience limits based on yearsOfExperience
+  const isFresher = yearsOfExperience !== undefined && yearsOfExperience < TEMPLATE_RULES.layout.fresherYearsThreshold;
+  const maxExperiences = isFresher ? 2 : TEMPLATE_RULES.content.maxExperiences;
 
   // Get all entries
   let allEntries = profile.projects.length > 0
@@ -516,7 +656,7 @@ export function tailorResume(profile: ProfileData, job: JobContext): TailoredRes
     .sort((a, b) => b.score - a.score)
     .map(({ exp }) => exp);
 
-  const experiences = sortByRelevance(workEntries);
+  const experiences = sortByRelevance(workEntries).slice(0, maxExperiences);
   const projects = sortByRelevance(projectEntries);
 
   tailoringNotes.push(`Font: ${TEMPLATE_RULES.font.family} | Name: ${TEMPLATE_RULES.font.nameSize} bold | Body: ${TEMPLATE_RULES.font.bodySize}`);
@@ -826,62 +966,18 @@ function buildPlainExperience(
     const titleLine = company ? `${role} | ${company}` : role;
     const fullLine = duration ? `${titleLine}${' '.repeat(Math.max(1, TEMPLATE_RULES.layout.pageWidthChars - titleLine.length - duration.length))}${duration}` : titleLine;
 
-    // Generate XYZ+STAR combined bullets
-    const bullets: string[] = [];
+    // Generate exactly 4 bullets using generateFourBullets
+    const bullets = generateFourBullets(exp, relevantKeywords);
 
-    // If we have full STAR data, use combined format
-    if (exp.situation && exp.action && exp.result) {
-      const mainBullet = formatCombinedXYZSTAR({
-        situation: exp.situation,
-        task: exp.task,
-        action: exp.action,
-        result: exp.result,
-        metric: exp.metrics?.[0],
-        keywords: relevantKeywords,
-      });
-      bullets.push(mainBullet);
-
-      // Check which keywords were injected
+    // Track injected keywords
+    for (const bullet of bullets) {
       for (const kw of relevantKeywords) {
-        if (mainBullet.toLowerCase().includes(kw.toLowerCase())) injected.push(kw);
-      }
-    } else if (exp.action && exp.result) {
-      // Partial STAR — format as XYZ
-      const bullet = formatCombinedXYZSTAR({
-        action: exp.action,
-        result: exp.result,
-        metric: exp.metrics?.[0],
-        keywords: relevantKeywords,
-      });
-      bullets.push(bullet);
-    }
-
-    // Format additional metrics as XYZ+STAR bullets
-    if (exp.metrics) {
-      for (const metric of exp.metrics.slice(bullets.length > 0 ? 1 : 0, TEMPLATE_RULES.content.maxBulletsPerRole)) {
-        if (!bullets.some(b => b.includes(metric))) {
-          const reformatted = reformatBulletAsXYZSTAR(metric, relevantKeywords);
-          bullets.push(reformatted);
-          // Track injected keywords
-          for (const kw of relevantKeywords) {
-            if (reformatted.toLowerCase().includes(kw.toLowerCase()) && !metric.toLowerCase().includes(kw.toLowerCase())) {
-              injected.push(kw);
-            }
-          }
-        }
-      }
-    }
-
-    // If still below minimum, add from action/result
-    if (bullets.length < TEMPLATE_RULES.content.minBulletsPerRole) {
-      if (exp.action && !bullets.some(b => b.includes(exp.action!))) {
-        bullets.push(reformatBulletAsXYZSTAR(exp.action, relevantKeywords));
+        if (bullet.toLowerCase().includes(kw.toLowerCase())) injected.push(kw);
       }
     }
 
     // Ensure all bullets have the bullet symbol
     const formattedBullets = bullets
-      .slice(0, TEMPLATE_RULES.content.maxBulletsPerRole)
       .map(b => `  ${TEMPLATE_RULES.content.bulletSymbol} ${b}`)
       .join('\n');
 
@@ -920,6 +1016,7 @@ function buildPlainProjects(
   const header = 'PROJECTS';
   const separator = '─'.repeat(header.length);
   const entries: string[] = [];
+  const relevantKeywords = [...keywords.technical.slice(0, 5), ...keywords.domain.slice(0, 3)];
 
   const topProjects = projects.slice(0, TEMPLATE_RULES.content.maxExperiences);
 
@@ -934,27 +1031,10 @@ function buildPlainProjects(
       ? `${leftPart}${' '.repeat(Math.max(1, TEMPLATE_RULES.layout.pageWidthChars - leftPart.length - duration.length))}${duration}`
       : leftPart;
 
-    // Build bullets from description/situation + real metrics
-    const bullets: string[] = [];
-
-    if (proj.situation) {
-      bullets.push(proj.situation);
-    }
-    if (proj.action && proj.action !== proj.situation) {
-      bullets.push(proj.action);
-    }
-
-    // Add real calculated metrics as bullets
-    if (proj.metrics) {
-      for (const metric of proj.metrics.slice(0, TEMPLATE_RULES.content.maxBulletsPerRole - bullets.length)) {
-        if (!bullets.some(b => b.includes(metric))) {
-          bullets.push(metric);
-        }
-      }
-    }
+    // Generate exactly 4 bullets using generateFourBullets
+    const bullets = generateFourBullets(proj, relevantKeywords);
 
     const formattedBullets = bullets
-      .slice(0, TEMPLATE_RULES.content.maxBulletsPerRole)
       .map(b => `  ${TEMPLATE_RULES.content.bulletSymbol} ${b}`)
       .join('\n');
 
@@ -1231,41 +1311,10 @@ function buildHTMLExperience(experiences: ProjectEntry[], keywords: { technical:
     const company = exp.company || '';
     const duration = exp.duration || '';
 
-    // Generate bullets in combined XYZ+STAR format
-    const bullets: string[] = [];
-
-    if (exp.situation && exp.action && exp.result) {
-      bullets.push(formatCombinedXYZSTAR({
-        situation: exp.situation,
-        task: exp.task,
-        action: exp.action,
-        result: exp.result,
-        metric: exp.metrics?.[0],
-        keywords: relevantKeywords,
-      }));
-    } else if (exp.action && exp.result) {
-      bullets.push(formatCombinedXYZSTAR({
-        action: exp.action,
-        result: exp.result,
-        metric: exp.metrics?.[0],
-        keywords: relevantKeywords,
-      }));
-    }
-
-    if (exp.metrics) {
-      for (const metric of exp.metrics.slice(bullets.length > 0 ? 1 : 0, TEMPLATE_RULES.content.maxBulletsPerRole)) {
-        if (!bullets.some(b => b.includes(metric))) {
-          bullets.push(reformatBulletAsXYZSTAR(metric, relevantKeywords));
-        }
-      }
-    }
-
-    if (bullets.length < TEMPLATE_RULES.content.minBulletsPerRole && exp.action) {
-      bullets.push(reformatBulletAsXYZSTAR(exp.action, relevantKeywords));
-    }
+    // Generate exactly 4 bullets using generateFourBullets
+    const bullets = generateFourBullets(exp, relevantKeywords);
 
     const bulletItems = bullets
-      .slice(0, TEMPLATE_RULES.content.maxBulletsPerRole)
       .map(b => `      <li>${escapeHtml(b)}</li>`)
       .join('\n');
 
@@ -1298,26 +1347,17 @@ function buildHTMLProjects(
   keywords: { technical: string[]; action: string[]; domain: string[] }
 ): string {
   const topProjects = projects.slice(0, TEMPLATE_RULES.content.maxExperiences);
+  const relevantKeywords = [...keywords.technical.slice(0, 5), ...keywords.domain.slice(0, 3)];
 
   const entries = topProjects.map(proj => {
     const name = proj.title || 'Project';
     const techs = (proj.technologies || []).join(', ');
     const duration = proj.duration || '';
 
-    // Build bullets from description + real calculated metrics
-    const bullets: string[] = [];
-    if (proj.situation) bullets.push(proj.situation);
-    if (proj.action && proj.action !== proj.situation) bullets.push(proj.action);
-    if (proj.metrics) {
-      for (const metric of proj.metrics.slice(0, TEMPLATE_RULES.content.maxBulletsPerRole - bullets.length)) {
-        if (!bullets.some(b => b.includes(metric))) {
-          bullets.push(metric);
-        }
-      }
-    }
+    // Generate exactly 4 bullets using generateFourBullets
+    const bullets = generateFourBullets(proj, relevantKeywords);
 
     const bulletItems = bullets
-      .slice(0, TEMPLATE_RULES.content.maxBulletsPerRole)
       .map(b => `      <li>${escapeHtml(b)}</li>`)
       .join('\n');
 

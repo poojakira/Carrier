@@ -82,6 +82,8 @@ model CareerProfile {
   certificationsJson     String   @default("[]")
   resumeText             String   @default("")
   canonicalResumeVersion String   @default("v1")
+  yearsOfExperience      Int?
+  targetRole             String   @default("")
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 }
