@@ -92,6 +92,7 @@ export type TailoredResume = {
   injectedKeywords: string[];
   format: 'xyz_star_combined';
   templateRules: typeof TEMPLATE_RULES;
+  pageMode: '1page' | '2page' | '3page';
 };
 
 // ─── Template Rules (Enforced) ─────────────────────────────────────────────────
@@ -412,12 +413,14 @@ function reformatBulletAsXYZSTAR(bullet: string, relevantKeywords: string[]): st
 
 /**
  * Generates EXACTLY 4 bullet points for a project/experience entry.
- * Each bullet is one natural sentence combining STAR elements without labels.
+ * Each bullet is one natural sentence blending STAR+XYZ:
+ *   - What was the context/problem (STAR situation)
+ *   - What action was taken using what method (XYZ - accomplished by doing)
+ *   - What measurable result was achieved (XYZ metric)
+ * All in ONE sentence, no labels. Every single bullet.
  *
- * Bullet 1: Situation/context + what was built (S+T)
- * Bullet 2: Core technical action — technologies/methods used (A+Z)
- * Bullet 3: Measurable outcome/result with real number (R+X+Y)
- * Bullet 4: Broader impact or scope — team size, users affected, scale
+ * If there's not enough real data to fill 4 bullets, generates sensible
+ * professional bullets from the available information.
  *
  * NEVER mentions GitHub stars, commits, forks, or pull requests.
  * Uses INDUSTRY metrics only: users, requests/sec, latency, uptime, team size, etc.
@@ -425,84 +428,112 @@ function reformatBulletAsXYZSTAR(bullet: string, relevantKeywords: string[]): st
 function generateFourBullets(entry: ProjectEntry, relevantKeywords: string[]): string[] {
   const bullets: string[] = [];
 
-  // ─── Bullet 1: Situation + what was built (S+T) ───
-  let bullet1: string;
-  if (entry.situation && entry.task) {
-    bullet1 = `${capitalizeFirst(entry.situation.replace(/[.,]$/, ''))} to ${entry.task.replace(/^to\s+/i, '').replace(/[.,]$/, '')}`;
-  } else if (entry.situation) {
-    bullet1 = capitalizeFirst(entry.situation.replace(/[.,]$/, ''));
-  } else if (entry.task) {
-    bullet1 = `Built ${entry.task.replace(/^to\s+/i, '').replace(/[.,]$/, '')}`;
+  const title = entry.title || 'production system';
+  const techs = (entry.technologies || []).slice(0, 4);
+  const techStr = techs.length > 0 ? techs.join(', ') : relevantKeywords.slice(0, 2).join(', ') || 'modern technologies';
+
+  // ─── Bullet 1: Context/situation + action + result (S+T focused) ───
+  if (entry.situation && entry.action && entry.result) {
+    bullets.push(sanitizeGitHubMetrics(
+      `${capitalizeFirst(entry.result.replace(/[.,]$/, ''))} by ${entry.action.charAt(0).toLowerCase() + entry.action.slice(1).replace(/[.,]$/, '')} during ${entry.situation.charAt(0).toLowerCase() + entry.situation.slice(1).replace(/[.,]$/, '')}`
+    ));
+  } else if (entry.situation && entry.action) {
+    bullets.push(sanitizeGitHubMetrics(
+      `${capitalizeFirst(entry.action.replace(/[.,]$/, ''))} to address ${entry.situation.charAt(0).toLowerCase() + entry.situation.slice(1).replace(/[.,]$/, '')}, delivering measurable improvement in system reliability`
+    ));
+  } else if (entry.action && entry.result) {
+    bullets.push(sanitizeGitHubMetrics(
+      `${capitalizeFirst(entry.result.replace(/[.,]$/, ''))} by ${entry.action.charAt(0).toLowerCase() + entry.action.slice(1).replace(/[.,]$/, '')}`
+    ));
   } else if (entry.action) {
-    bullet1 = capitalizeFirst(entry.action.replace(/[.,]$/, '').split(',')[0]);
+    const kw = relevantKeywords.find(k => !entry.action!.toLowerCase().includes(k.toLowerCase()));
+    bullets.push(sanitizeGitHubMetrics(
+      `${capitalizeFirst(entry.action.replace(/[.,]$/, ''))}${kw ? ` leveraging ${kw}` : ''}, resulting in improved operational efficiency`
+    ));
   } else {
-    bullet1 = `Developed ${entry.title || 'production system'} to address critical business requirements`;
+    bullets.push(sanitizeGitHubMetrics(
+      `Architected and delivered ${title} using ${techStr} to solve critical business requirements, reducing manual effort by streamlining core workflows`
+    ));
   }
-  // Inject a keyword if it fits naturally
-  const kw1 = relevantKeywords.find(kw => !bullet1.toLowerCase().includes(kw.toLowerCase()));
-  if (kw1 && !bullet1.includes(' using ') && bullet1.length < 120) {
-    bullet1 += ` using ${kw1}`;
-  }
-  bullets.push(sanitizeGitHubMetrics(bullet1));
 
-  // ─── Bullet 2: Core technical action (A+Z) ───
-  let bullet2: string;
-  if (entry.action) {
-    bullet2 = capitalizeFirst(entry.action.replace(/[.,]$/, ''));
-  } else if (entry.technologies && entry.technologies.length > 0) {
-    bullet2 = `Implemented core functionality using ${entry.technologies.slice(0, 4).join(', ')}`;
-  } else {
-    bullet2 = `Engineered the solution with modern tooling and automated testing pipelines`;
-  }
-  // Inject keywords as technologies if not present
-  const kwsForBullet2 = relevantKeywords.filter(kw => !bullet2.toLowerCase().includes(kw.toLowerCase())).slice(0, 2);
-  if (kwsForBullet2.length > 0) {
-    if (bullet2.includes(' using ') || bullet2.includes(' with ')) {
-      bullet2 += `, ${kwsForBullet2.join(', ')}`;
+  // ─── Bullet 2: Technical action + method + outcome (A+Z focused) ───
+  if (entry.action && bullets.length < 2) {
+    // Already used action in bullet 1, try a different angle
+    if (entry.technologies && entry.technologies.length > 0) {
+      bullets.push(sanitizeGitHubMetrics(
+        `Engineered core components using ${techStr} by implementing scalable architecture patterns, achieving high maintainability across the codebase`
+      ));
     } else {
-      bullet2 += ` with ${kwsForBullet2.join(' and ')}`;
+      bullets.push(sanitizeGitHubMetrics(
+        `Implemented end-to-end solution by applying best practices in ${relevantKeywords.slice(0, 2).join(' and ') || 'software engineering'}, ensuring production-grade quality and reliability`
+      ));
     }
-  }
-  bullets.push(sanitizeGitHubMetrics(bullet2));
-
-  // ─── Bullet 3: Measurable outcome with real number (R+X+Y) ───
-  let bullet3: string;
-  if (entry.result) {
-    bullet3 = capitalizeFirst(entry.result.replace(/[.,]$/, ''));
-    // Ensure it has a metric
-    if (entry.metrics && entry.metrics.length > 0 && !/\d/.test(bullet3)) {
-      const metricStr = entry.metrics[0].replace(/^[•\-*]\s*/, '');
-      bullet3 += `, achieving ${metricStr}`;
-    }
-  } else if (entry.metrics && entry.metrics.length > 0) {
-    const metricStr = entry.metrics[0].replace(/^[•\-*]\s*/, '');
-    bullet3 = capitalizeFirst(metricStr);
+  } else if (entry.technologies && entry.technologies.length > 0) {
+    bullets.push(sanitizeGitHubMetrics(
+      `Implemented core functionality by leveraging ${techStr} with automated testing pipelines, achieving consistent deployment success rate above 95%`
+    ));
   } else {
-    bullet3 = `Achieved measurable improvement in system performance and reliability`;
+    const kwsForBullet2 = relevantKeywords.filter(kw => !bullets[0]?.toLowerCase().includes(kw.toLowerCase())).slice(0, 2);
+    bullets.push(sanitizeGitHubMetrics(
+      `Designed and built the technical solution by applying ${kwsForBullet2.length > 0 ? kwsForBullet2.join(' and ') : 'industry best practices'}, delivering production-ready code with comprehensive test coverage`
+    ));
   }
-  bullets.push(sanitizeGitHubMetrics(bullet3));
 
-  // ─── Bullet 4: Broader impact/scope — team, users, scale ───
-  let bullet4: string;
+  // ─── Bullet 3: Measurable outcome with metric (R+X+Y focused) ───
+  if (entry.metrics && entry.metrics.length > 0) {
+    const metricStr = entry.metrics[0].replace(/^[•\-*]\s*/, '');
+    bullets.push(sanitizeGitHubMetrics(
+      `${capitalizeFirst(metricStr.replace(/[.,]$/, ''))} by optimizing key system components through targeted performance improvements`
+    ));
+  } else if (entry.result && /\d/.test(entry.result)) {
+    bullets.push(sanitizeGitHubMetrics(
+      `${capitalizeFirst(entry.result.replace(/[.,]$/, ''))} by systematically improving system architecture and eliminating performance bottlenecks`
+    ));
+  } else if (entry.result) {
+    bullets.push(sanitizeGitHubMetrics(
+      `${capitalizeFirst(entry.result.replace(/[.,]$/, ''))} by implementing data-driven optimizations that enhanced overall throughput and user experience`
+    ));
+  } else {
+    bullets.push(sanitizeGitHubMetrics(
+      `Improved system performance and response times by refactoring critical paths using ${techStr}, reducing latency and increasing throughput for end users`
+    ));
+  }
+
+  // ─── Bullet 4: Broader impact/scope (scale, team, users) ───
   if (entry.metrics && entry.metrics.length > 1) {
     const secondMetric = entry.metrics[1].replace(/^[•\-*]\s*/, '');
-    bullet4 = capitalizeFirst(secondMetric);
+    bullets.push(sanitizeGitHubMetrics(
+      `${capitalizeFirst(secondMetric.replace(/[.,]$/, ''))} by coordinating cross-functional efforts and ensuring alignment with organizational objectives`
+    ));
+  } else if (entry.company) {
+    bullets.push(sanitizeGitHubMetrics(
+      `Supported production deployment at ${entry.company} by establishing monitoring and alerting systems, maintaining high availability for end users across multiple regions`
+    ));
+  } else if (techs.length > 2) {
+    bullets.push(sanitizeGitHubMetrics(
+      `Operated across ${techs.length} integrated services by building robust CI/CD pipelines and observability tooling, ensuring 99%+ uptime for production workloads`
+    ));
   } else {
-    // Build from available context
-    const parts: string[] = [];
-    if (entry.technologies && entry.technologies.length > 2) {
-      parts.push(`across ${entry.technologies.length} integrated services`);
-    }
-    if (entry.company) {
-      parts.push(`supporting production workloads`);
-    }
-    bullet4 = parts.length > 0
-      ? `Operated ${parts.join(' and ')}`
-      : `Supported production deployment serving end users with high availability`;
+    bullets.push(sanitizeGitHubMetrics(
+      `Delivered end-to-end solution supporting production traffic by establishing deployment automation and monitoring, ensuring reliable service for downstream consumers`
+    ));
   }
-  bullets.push(sanitizeGitHubMetrics(bullet4));
 
-  return bullets;
+  // ─── Safety: Ensure exactly 4 bullets ───
+  // If somehow we have fewer than 4 (shouldn't happen with above logic), pad with professional bullets
+  while (bullets.length < 4) {
+    const idx = bullets.length;
+    const padBullets = [
+      `Collaborated with cross-functional stakeholders by leading technical design reviews using ${techStr}, accelerating delivery timelines by reducing rework cycles`,
+      `Drove adoption of engineering best practices by mentoring team members on ${techStr}, resulting in measurable improvement in code quality metrics`,
+      `Reduced technical debt by refactoring legacy components using modern patterns in ${techStr}, improving maintainability and reducing bug rates`,
+      `Enhanced developer productivity by automating repetitive workflows using ${techStr}, saving significant engineering hours per sprint cycle`,
+    ];
+    bullets.push(sanitizeGitHubMetrics(padBullets[idx % padBullets.length]));
+  }
+
+  // If we somehow have more than 4, trim
+  return bullets.slice(0, 4);
 }
 
 /**
@@ -630,16 +661,42 @@ function scoreRelevance(entry: ProjectEntry, keywords: { technical: string[]; ac
 
 // ─── Main Tailoring Function ───────────────────────────────────────────────────
 
-export function tailorResume(profile: ProfileData, job: JobContext, yearsOfExperience?: number): TailoredResume {
+export function tailorResume(profile: ProfileData, job: JobContext, yearsOfExperience?: number, portfolioLink?: string): TailoredResume {
   const keywords = extractKeywords(job.description);
   const allKeywordsFlat = [...keywords.technical, ...keywords.action, ...keywords.domain];
   const { matched, prioritized } = matchAndPrioritizeSkills(profile.skills, keywords);
   const tailoringNotes: string[] = [];
   const injectedKeywords: string[] = [];
 
-  // Determine experience limits based on yearsOfExperience
-  const isFresher = yearsOfExperience !== undefined && yearsOfExperience < TEMPLATE_RULES.layout.fresherYearsThreshold;
-  const maxExperiences = isFresher ? 2 : TEMPLATE_RULES.content.maxExperiences;
+  // Determine page mode based on yearsOfExperience
+  let pageMode: '1page' | '2page' | '3page' = '2page';
+  if (yearsOfExperience !== undefined) {
+    if (yearsOfExperience < 2) pageMode = '1page';
+    else if (yearsOfExperience >= 2 && yearsOfExperience <= 5) pageMode = '2page';
+    else pageMode = '3page';
+  }
+
+  let maxExperiences: number;
+  let maxProjects: number;
+  let bulletsPerEntry: number;
+
+  switch (pageMode) {
+    case '1page':
+      maxExperiences = 2;
+      maxProjects = 2; // Cut to 2-3 projects
+      bulletsPerEntry = 4; // Still 4 but shorter sentences
+      break;
+    case '2page':
+      maxExperiences = 4;
+      maxProjects = 4;
+      bulletsPerEntry = 4;
+      break;
+    case '3page':
+      maxExperiences = 6;
+      maxProjects = 5;
+      bulletsPerEntry = 4; // Full detail
+      break;
+  }
 
   // Get all entries
   let allEntries = profile.projects.length > 0
@@ -657,18 +714,19 @@ export function tailorResume(profile: ProfileData, job: JobContext, yearsOfExper
     .map(({ exp }) => exp);
 
   const experiences = sortByRelevance(workEntries).slice(0, maxExperiences);
-  const projects = sortByRelevance(projectEntries);
+  const projects = sortByRelevance(projectEntries).slice(0, maxProjects);
 
+  tailoringNotes.push(`Page mode: ${pageMode} (based on ${yearsOfExperience !== undefined ? yearsOfExperience + ' years experience' : 'default'}) — ${bulletsPerEntry} bullets per entry`);
   tailoringNotes.push(`Font: ${TEMPLATE_RULES.font.family} | Name: ${TEMPLATE_RULES.font.nameSize} bold | Body: ${TEMPLATE_RULES.font.bodySize}`);
   tailoringNotes.push(`Matched ${matched.length}/${profile.skills.length} skills to job keywords`);
   tailoringNotes.push(`Extracted ${keywords.technical.length} technical, ${keywords.action.length} action, ${keywords.domain.length} domain keywords from JD`);
   tailoringNotes.push(`Reordered ${experiences.length} work experiences and ${projects.length} projects by relevance to ${job.title}`);
   tailoringNotes.push(`Format: Combined XYZ+STAR (every bullet uses both frameworks)`);
-  tailoringNotes.push(`Template: ${TEMPLATE_RULES.layout.margins} margins, ${TEMPLATE_RULES.font.bodySize} body, max ${TEMPLATE_RULES.layout.maxPages} pages`);
+  tailoringNotes.push(`Template: ${TEMPLATE_RULES.layout.margins} margins, ${TEMPLATE_RULES.font.bodySize} body, max ${pageMode === '1page' ? 1 : pageMode === '2page' ? 2 : 3} pages`);
 
   // ─── Build Plain-Text Resume ───────────────────────────────────────────────
   const plainSections: string[] = [];
-  plainSections.push(buildPlainHeader(profile, job));
+  plainSections.push(buildPlainHeader(profile, job, portfolioLink));
   plainSections.push(buildPlainSummary(profile, job, matched, keywords));
   plainSections.push(buildPlainSkills(prioritized));
   if (experiences.length > 0) {
@@ -686,7 +744,7 @@ export function tailorResume(profile: ProfileData, job: JobContext, yearsOfExper
 
   // ─── Build HTML Resume (with full template styling) ────────────────────────
   const htmlSections: string[] = [];
-  htmlSections.push(buildHTMLHeader(profile, job));
+  htmlSections.push(buildHTMLHeader(profile, job, portfolioLink));
   htmlSections.push(buildHTMLSummary(profile, job, matched, keywords));
   htmlSections.push(buildHTMLSkills(prioritized, matched));
   if (experiences.length > 0) {
@@ -725,6 +783,7 @@ export function tailorResume(profile: ProfileData, job: JobContext, yearsOfExper
     injectedKeywords: [...new Set(injectedKeywords)],
     format: 'xyz_star_combined',
     templateRules: TEMPLATE_RULES,
+    pageMode,
   };
 }
 
@@ -898,10 +957,12 @@ function normalizeForDisplay(keyword: string): string {
 // PLAIN TEXT BUILDERS (for ATS systems that parse plain text)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function buildPlainHeader(profile: ProfileData, job: JobContext): string {
+function buildPlainHeader(profile: ProfileData, job: JobContext, portfolioLink?: string): string {
   const name = profile.name.toUpperCase();
   const headline = profile.headline || `${job.title}`;
-  const contact = [profile.location, profile.email, profile.phone, profile.linkedin].filter((x): x is string => Boolean(x)).join(' | ');
+  const contactParts = [profile.location, profile.email, profile.phone, profile.linkedin];
+  if (portfolioLink) contactParts.push(`Portfolio: ${portfolioLink}`);
+  const contact = contactParts.filter((x): x is string => Boolean(x)).join(' | ');
   return `${name}\n${headline}\n${contact}`;
 }
 
@@ -956,9 +1017,7 @@ function buildPlainExperience(
   const injected: string[] = [];
   const relevantKeywords = [...keywords.technical.slice(0, 5), ...keywords.domain.slice(0, 3)];
 
-  const topExperiences = experiences.slice(0, TEMPLATE_RULES.content.maxExperiences);
-
-  for (const exp of topExperiences) {
+  for (const exp of experiences) {
     // Title line with right-aligned date
     const role = exp.role || exp.title || 'Professional Role';
     const company = exp.company || '';
@@ -1018,9 +1077,7 @@ function buildPlainProjects(
   const entries: string[] = [];
   const relevantKeywords = [...keywords.technical.slice(0, 5), ...keywords.domain.slice(0, 3)];
 
-  const topProjects = projects.slice(0, TEMPLATE_RULES.content.maxExperiences);
-
-  for (const proj of topProjects) {
+  for (const proj of projects) {
     const name = proj.title || 'Project';
     const techs = (proj.technologies || []).join(', ');
     const duration = proj.duration || '';
@@ -1216,15 +1273,17 @@ ${body}
 </html>`;
 }
 
-function buildHTMLHeader(profile: ProfileData, job: JobContext): string {
+function buildHTMLHeader(profile: ProfileData, job: JobContext, portfolioLink?: string): string {
   // Format: large small-caps name centered, then small contact with | separators
-  const contactParts = [profile.location, profile.email, profile.phone, profile.linkedin].filter((x): x is string => Boolean(x));
-  const contactHtml = contactParts.map((part, i) => {
-    const isLink = part.includes('linkedin') || part.includes('github') || part.includes('@');
+  const contactParts = [profile.location, profile.email, profile.phone, profile.linkedin];
+  if (portfolioLink) contactParts.push(`Portfolio: ${portfolioLink}`);
+  const filteredParts = contactParts.filter((x): x is string => Boolean(x));
+  const contactHtml = filteredParts.map((part, i) => {
+    const isLink = part.includes('linkedin') || part.includes('github') || part.includes('@') || part.startsWith('Portfolio:');
     const rendered = isLink
-      ? `<a href="${part.startsWith('http') ? '' : (part.includes('@') ? 'mailto:' : 'https://')}${escapeHtml(part)}">${escapeHtml(part)}</a>`
+      ? `<a href="${part.startsWith('http') ? '' : (part.includes('@') ? 'mailto:' : part.startsWith('Portfolio:') ? '' : 'https://')}${escapeHtml(part.startsWith('Portfolio: ') ? part.slice(11) : part)}">${escapeHtml(part)}</a>`
       : escapeHtml(part);
-    return i < contactParts.length - 1 ? `${rendered}<span class="sep">|</span>` : rendered;
+    return i < filteredParts.length - 1 ? `${rendered}<span class="sep">|</span>` : rendered;
   }).join(' ');
 
   return `
@@ -1302,11 +1361,9 @@ function categorizeSkills(skills: string[]): Record<string, string[]> {
 
 function buildHTMLExperience(experiences: ProjectEntry[], keywords: { technical: string[]; action: string[]; domain: string[] }, job: JobContext): string {
   const relevantKeywords = [...keywords.technical.slice(0, 5), ...keywords.domain.slice(0, 3)];
-  const topExperiences = experiences.slice(0, TEMPLATE_RULES.content.maxExperiences);
-
   // CSS: tight spacing before subheading, after subheading, per item, at list end
 
-  const entries = topExperiences.map(exp => {
+  const entries = experiences.map(exp => {
     const role = exp.role || exp.title || 'Professional Role';
     const company = exp.company || '';
     const duration = exp.duration || '';
@@ -1346,10 +1403,9 @@ function buildHTMLProjects(
   projects: ProjectEntry[],
   keywords: { technical: string[]; action: string[]; domain: string[] }
 ): string {
-  const topProjects = projects.slice(0, TEMPLATE_RULES.content.maxExperiences);
   const relevantKeywords = [...keywords.technical.slice(0, 5), ...keywords.domain.slice(0, 3)];
 
-  const entries = topProjects.map(proj => {
+  const entries = projects.map(proj => {
     const name = proj.title || 'Project';
     const techs = (proj.technologies || []).join(', ');
     const duration = proj.duration || '';
