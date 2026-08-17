@@ -1,0 +1,3 @@
+import { NextResponse } from 'next/server'; import { requireUser } from '@/lib/auth'; import { db } from '@/lib/db';
+export async function GET(){const u=await requireUser();return NextResponse.json(await db.policy.findMany({where:{userId:u.id},orderBy:{createdAt:'desc'}}));}
+export async function PUT(req:Request){const u=await requireUser();const body=await req.json();const p=await db.policy.findFirst({where:{userId:u.id},orderBy:{createdAt:'asc'}});if(!p)return NextResponse.json({error:'Policy not found'},{status:404});return NextResponse.json(await db.policy.update({where:{id:p.id},data:body}));}

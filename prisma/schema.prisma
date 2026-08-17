@@ -1,0 +1,206 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum ApplicationStatus {
+  READY
+  WAITING_USER
+  SUBMITTING
+  SUBMITTED
+  SCREEN
+  INTERVIEW
+  OFFER
+  REJECTED
+  WITHDRAWN
+}
+
+enum PolicyMode {
+  REVIEW_ALL
+  REVIEW_RISKY
+  AUTO_SUBMIT
+}
+
+enum AuditAction {
+  LOGIN
+  LOGOUT
+  PROFILE_UPDATED
+  JOB_INGESTED
+  APPLICATION_PREPARED
+  APPLICATION_SUBMITTED
+  POLICY_EVALUATED
+  AUTOMATION_PAUSED
+  AUTOMATION_RESUMED
+  TWO_FACTOR_ENABLED
+  TWO_FACTOR_DISABLED
+  TWO_FACTOR_VERIFIED
+  TWO_FACTOR_FAILED
+  INTEGRATION_CONNECTED
+  INTEGRATION_DISCONNECTED
+}
+
+model User {
+  id               String         @id @default(cuid())
+  email            String         @unique
+  passwordHash     String
+  name             String
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  profile          CareerProfile?
+  jobs             Job[]
+  applications     Application[]
+  policies         Policy[]
+  auditLogs        AuditLog[]
+  integrations     Integration[]
+  automationPaused Boolean        @default(false)
+  twoFactorEnabled Boolean        @default(false)
+  twoFactorSecret  String?
+  twoFactorEnabledAt DateTime?
+  notificationPrefsJson String @default("{\"emailEnabled\":true,\"applicationUpdates\":true,\"newJobs\":true,\"weeklyDigest\":true,\"approvalAlerts\":true}")
+}
+
+model CareerProfile {
+  id                     String   @id @default(cuid())
+  userId                 String   @unique
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  headline               String   @default("")
+  summary                String   @default("")
+  location               String   @default("")
+  workAuth               String   @default("")
+  sponsorship            String   @default("")
+  targetRolesJson        String   @default("[]")
+  targetLocationsJson    String   @default("[]")
+  salaryMin              Int?
+  salaryMax              Int?
+  skillsJson             String   @default("[]")
+  projectsJson           String   @default("[]")
+  educationJson          String   @default("[]")
+  certificationsJson     String   @default("[]")
+  resumeText             String   @default("")
+  canonicalResumeVersion String   @default("v1")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model Job {
+  id               String        @id @default(cuid())
+  userId           String?
+  user             User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+  source           String
+  externalId       String
+  company          String
+  title            String
+  location         String
+  url              String
+  description      String
+  salaryMin        Int?
+  salaryMax        Int?
+  remote           Boolean       @default(false)
+  sponsorship      Boolean?
+  trustScore       Int           @default(70)
+  technicalFit     Int           @default(0)
+  experienceFit    Int           @default(0)
+  educationFit     Int           @default(0)
+  projectFit       Int           @default(0)
+  locationFit      Int           @default(0)
+  compensationFit  Int           @default(0)
+  authorizationFit Int           @default(0)
+  seniorityFit     Int           @default(0)
+  careerValueFit   Int           @default(0)
+  overallFit       Int           @default(0)
+  requirementsJson String        @default("[]")
+  riskFlagsJson    String        @default("[]")
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  applications     Application[]
+
+  @@unique([source, externalId])
+  @@index([overallFit])
+}
+
+model Application {
+  id                  String            @id @default(cuid())
+  userId              String
+  user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobId               String
+  job                 Job               @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  status              ApplicationStatus @default(READY)
+  adapter             String            @default("manual")
+  resumeVersion       String
+  coverLetter         String            @default("")
+  answersJson         String            @default("[]")
+  submissionRef       String?
+  submissionTimestamp DateTime?
+  confirmationJson    String            @default("{}")
+  applyUrl            String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  events              ApplicationEvent[]
+
+  @@unique([userId, jobId])
+}
+
+model ApplicationEvent {
+  id            String            @id @default(cuid())
+  applicationId String
+  application   Application       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  status        ApplicationStatus
+  note          String
+  metadataJson  String            @default("{}")
+  createdAt     DateTime          @default(now())
+}
+
+model Policy {
+  id                       String     @id @default(cuid())
+  userId                   String
+  user                     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                     String
+  enabled                  Boolean    @default(true)
+  mode                     PolicyMode @default(REVIEW_RISKY)
+  minMatch                 Int        @default(90)
+  minSalary                Int?
+  countriesJson            String     @default("[\"United States\"]")
+  targetRolesJson          String     @default("[]")
+  requireSponsorship       Boolean?
+  blockDuplicates          Boolean    @default(true)
+  requireApprovalForRisky  Boolean    @default(true)
+  createdAt                DateTime   @default(now())
+  updatedAt                DateTime   @updatedAt
+}
+
+model Integration {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider          String
+  status            String   @default("DISCONNECTED")
+  accountLabel      String   @default("")
+  scopesJson        String   @default("[]")
+  accessTokenEnc    String?
+  refreshTokenEnc   String?
+  expiresAt         DateTime?
+  externalAccountId String?
+  metadataJson      String   @default("{}")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, provider])
+}
+
+model AuditLog {
+  id           String      @id @default(cuid())
+  userId       String
+  user         User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action       AuditAction
+  resource     String
+  resourceId   String?
+  metadataJson String      @default("{}")
+  ipHash       String?
+  createdAt    DateTime    @default(now())
+
+  @@index([userId, createdAt])
+}

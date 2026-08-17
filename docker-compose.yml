@@ -1,0 +1,24 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: careerly
+      POSTGRES_USER: careerly
+      POSTGRES_PASSWORD: careerly
+    ports: ["5432:5432"]
+    volumes: [careerly_pg:/var/lib/postgresql/data]
+  web:
+    build: .
+    depends_on: [db]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://careerly:careerly@db:5432/careerly?schema=public
+      AUTH_SECRET: ${AUTH_SECRET}
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:3000/api/integrations/google/callback}
+    ports: ["3000:3000"]
+volumes:
+  careerly_pg:

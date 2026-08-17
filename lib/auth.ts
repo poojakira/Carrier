@@ -1,0 +1,9 @@
+import { cookies } from 'next/headers'; import { jwtVerify, SignJWT } from 'jose'; import { db } from './db';
+function authSecret(){const s=process.env.AUTH_SECRET;if(!s || s.length<32) throw new Error('AUTH_SECRET must be configured with at least 32 characters');return new TextEncoder().encode(s);}
+const COOKIE='careerly_session', PENDING_COOKIE='careerly_2fa_pending';
+export async function createSession(userId:string){const token=await new SignJWT({userId}).setProtectedHeader({alg:'HS256'}).setIssuedAt().setExpirationTime('7d').sign(authSecret());const store=await cookies();store.set(COOKIE,token,{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'lax',path:'/',maxAge:604800});}
+export async function createTwoFactorPending(userId:string){const token=await new SignJWT({userId,twoFactorPending:true}).setProtectedHeader({alg:'HS256'}).setIssuedAt().setExpirationTime('10m').sign(authSecret());const store=await cookies();store.set(PENDING_COOKIE,token,{httpOnly:true,secure:process.env.NODE_ENV==='production',sameSite:'lax',path:'/',maxAge:600});}
+export async function getTwoFactorPendingUser(){const token=(await cookies()).get(PENDING_COOKIE)?.value;if(!token)return null;try{const {payload}=await jwtVerify(token,authSecret());if(payload.twoFactorPending!==true||typeof payload.userId!=='string')return null;return db.user.findUnique({where:{id:payload.userId}});}catch{return null;}}
+export async function clearTwoFactorPending(){(await cookies()).delete(PENDING_COOKIE);}
+export async function getCurrentUser(){const token=(await cookies()).get(COOKIE)?.value;if(!token)return null;try{const {payload}=await jwtVerify(token,authSecret());if(typeof payload.userId!=='string')return null;return db.user.findUnique({where:{id:payload.userId},include:{profile:true}});}catch{return null;}}
+export async function requireUser(){const user=await getCurrentUser();if(!user)throw new Error('UNAUTHORIZED');return user;}

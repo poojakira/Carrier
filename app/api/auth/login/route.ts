@@ -1,0 +1,4 @@
+import { NextResponse } from 'next/server';
+import { z } from 'zod'; import { compare } from 'bcryptjs'; import { db } from '@/lib/db'; import { createSession, createTwoFactorPending } from '@/lib/auth'; import { audit } from '@/lib/audit';
+const schema=z.object({email:z.string().trim().toLowerCase().email(),password:z.string().min(1)});
+export async function POST(req:Request){try{const d=schema.parse(await req.json());const u=await db.user.findUnique({where:{email:d.email}});if(!u||!(await compare(d.password,u.passwordHash)))return NextResponse.json({error:'Invalid credentials'},{status:401});if(u.twoFactorEnabled){await createTwoFactorPending(u.id);return NextResponse.json({ok:true,requiresTwoFactor:true});}await createSession(u.id);await audit(u.id,'LOGIN','session');return NextResponse.json({ok:true});}catch(e){return NextResponse.json({error:e instanceof Error?e.message:'Invalid request'},{status:400});}}
