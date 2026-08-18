@@ -20,6 +20,7 @@ type ImportResult = {
   warnings?: string[];
   source?: string;
   profile?: { name: string; headline: string; skillsCount: number; experienceCount: number; educationCount: number };
+  parsed?: { name: string; headline: string; skillsCount: number; experienceCount: number; educationCount: number; certificationsCount: number };
 };
 
 const YEARS_OPTIONS = [
@@ -31,7 +32,12 @@ const YEARS_OPTIONS = [
   { value: 10, label: '10+ years' },
 ];
 
+type ImportMethod = 'github' | 'resume';
+
 export default function ImportProfile() {
+  // Method selector
+  const [importMethod, setImportMethod] = useState<ImportMethod | null>(null);
+
   // Wizard state
   const [currentStep, setCurrentStep] = useState(1);
 
@@ -52,6 +58,12 @@ export default function ImportProfile() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [submitError, setSubmitError] = useState('');
+
+  // Resume paste method
+  const [resumeText, setResumeText] = useState('');
+  const [resumeSubmitting, setResumeSubmitting] = useState(false);
+  const [resumeError, setResumeError] = useState('');
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
 
   // ─── Step 1: Analyze GitHub ────────────────────────────────────────────
   async function handleAnalyzeGitHub() {
@@ -151,8 +163,54 @@ export default function ImportProfile() {
     }
   }
 
+  // ─── Resume paste/upload submit ────────────────────────────────────────
+  async function handleResumeSubmit() {
+    if (resumeText.trim().length < 50) {
+      setResumeError('Please paste at least 50 characters of your resume.');
+      return;
+    }
+    setResumeSubmitting(true);
+    setResumeError('');
+
+    try {
+      const res = await fetch('/api/profile/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'resume',
+          resumeText: resumeText.trim(),
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Import failed');
+      setResult(data);
+    } catch (e) {
+      setResumeError(e instanceof Error ? e.message : 'Import failed');
+    } finally {
+      setResumeSubmitting(false);
+    }
+  }
+
+  // ─── Handle file upload (read text from .txt files) ────────────────────
+  async function handleFileUpload(file: File) {
+    setResumeFile(file);
+    setResumeError('');
+    try {
+      const text = await file.text();
+      if (text.trim().length < 50) {
+        setResumeError('The file appears to be too short or empty. Please use a .txt file with your resume content.');
+        return;
+      }
+      setResumeText(text);
+    } catch {
+      setResumeError('Could not read the file. Please paste your resume text directly instead.');
+    }
+  }
+
   // ─── Success state ─────────────────────────────────────────────────────
   if (result) {
+    const profileInfo = result.profile || result.parsed;
     return (
       <div className="content">
         <div className="topbar">
@@ -168,7 +226,9 @@ export default function ImportProfile() {
             <div>
               <h2 style={{ margin: 0 }}>Your profile is ready</h2>
               <div className="muted">
-                Extracted from {result.source} ({result.confidence}% confidence)
+                {result.method === 'resume_upload'
+                  ? 'Parsed from your resume'
+                  : `Extracted from ${result.source} (${result.confidence}% confidence)`}
               </div>
             </div>
           </div>
@@ -179,23 +239,19 @@ export default function ImportProfile() {
               <div className="stack">
                 <div className="split">
                   <span>Name</span>
-                  <span className="pill">{result.profile?.name || '—'}</span>
+                  <span className="pill">{profileInfo?.name || '—'}</span>
                 </div>
                 <div className="split">
                   <span>Skills</span>
-                  <span className="pill good">{result.profile?.skillsCount || 0} found</span>
+                  <span className="pill good">{profileInfo?.skillsCount || 0} found</span>
                 </div>
                 <div className="split">
                   <span>Experience entries</span>
-                  <span className="pill good">{result.profile?.experienceCount || 0} found</span>
+                  <span className="pill good">{profileInfo?.experienceCount || 0} found</span>
                 </div>
                 <div className="split">
-                  <span>Target role</span>
-                  <span className="pill">{targetRole}</span>
-                </div>
-                <div className="split">
-                  <span>Experience level</span>
-                  <span className="pill">{YEARS_OPTIONS.find(o => o.value === yearsOfExperience)?.label}</span>
+                  <span>Education</span>
+                  <span className="pill good">{profileInfo?.educationCount || 0} found</span>
                 </div>
               </div>
             </div>
@@ -231,8 +287,102 @@ export default function ImportProfile() {
         </div>
       </div>
 
+      {/* ─── Method Selector ─────────────────────────────────────────── */}
+      {!importMethod && (
+        <div style={{ marginTop: 24, display: 'grid', gap: 16, gridTemplateColumns: '1fr 1fr', maxWidth: 640 }}>
+          <button
+            className="card"
+            onClick={() => setImportMethod('github')}
+            style={{ cursor: 'pointer', textAlign: 'left', border: '1px solid #2a2a3e', background: '#111', padding: 24 }}
+          >
+            <div style={{ fontSize: 32, marginBottom: 12 }}>🐙</div>
+            <h3 style={{ margin: '0 0 8px' }}>Import from GitHub</h3>
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+              Analyze your repositories to extract skills, languages, and projects automatically.
+            </p>
+          </button>
+          <button
+            className="card"
+            onClick={() => setImportMethod('resume')}
+            style={{ cursor: 'pointer', textAlign: 'left', border: '1px solid #2a2a3e', background: '#111', padding: 24 }}
+          >
+            <div style={{ fontSize: 32, marginBottom: 12 }}>📄</div>
+            <h3 style={{ margin: '0 0 8px' }}>Paste / Upload Resume</h3>
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+              Paste your existing resume text or upload a .txt file. We&apos;ll parse it into structured data.
+            </p>
+          </button>
+        </div>
+      )}
+
+      {/* ─── Resume Paste/Upload Method ──────────────────────────────── */}
+      {importMethod === 'resume' && (
+        <div className="card" style={{ marginTop: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <h2 style={{ margin: 0 }}>Paste or Upload Your Resume</h2>
+            <button className="btn" onClick={() => setImportMethod(null)} style={{ fontSize: 13 }}>← Change method</button>
+          </div>
+          <p className="muted" style={{ marginBottom: 24 }}>
+            Paste your full resume content below, or upload a .txt file. We&apos;ll extract your skills, experience, education, and certifications.
+          </p>
+
+          <div style={{ marginBottom: 16 }}>
+            <label className="label" htmlFor="resume-file">
+              Upload resume file
+              <span className="muted" style={{ fontWeight: 400, marginLeft: 8, fontSize: 12 }}>.txt format</span>
+            </label>
+            <input
+              id="resume-file"
+              type="file"
+              accept=".txt,.md"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) handleFileUpload(file);
+              }}
+              style={{ marginBottom: 8 }}
+            />
+            {resumeFile && <div className="muted" style={{ fontSize: 13 }}>Loaded: {resumeFile.name}</div>}
+          </div>
+
+          <div>
+            <label className="label" htmlFor="resume-text">Or paste your resume text</label>
+            <textarea
+              id="resume-text"
+              className="textarea"
+              placeholder={"JOHN DOE\nSenior Software Engineer\n\nSUMMARY\n3+ years building distributed systems...\n\nEXPERIENCE\nSoftware Engineer, Acme Corp (2022–Present)\n• Built microservices handling 1M+ requests/day\n• Reduced latency by 40% through caching strategy\n\nSKILLS\nTypeScript, Python, Go, AWS, Kubernetes, PostgreSQL..."}
+              value={resumeText}
+              onChange={e => setResumeText(e.target.value)}
+              style={{ minHeight: 300, fontFamily: 'monospace', fontSize: 13 }}
+            />
+          </div>
+
+          <div className="muted" style={{ marginTop: 8, fontSize: 13 }}>
+            {resumeText.length > 0 ? `${resumeText.length} characters` : 'Minimum 50 characters required'}
+          </div>
+
+          {resumeError && (
+            <div className="notice" style={{ marginTop: 16, color: '#c41' }}>{resumeError}</div>
+          )}
+
+          <button
+            className="btn primary"
+            onClick={handleResumeSubmit}
+            disabled={resumeSubmitting || resumeText.trim().length < 50}
+            style={{ marginTop: 20 }}
+          >
+            {resumeSubmitting ? 'Parsing your resume...' : 'Import Resume'}
+          </button>
+        </div>
+      )}
+
+      {/* ─── GitHub Method ───────────────────────────────────────────── */}
+      {importMethod === 'github' && (<>
+      <div style={{ marginTop: 24, marginBottom: 8 }}>
+        <button className="btn" onClick={() => setImportMethod(null)} style={{ fontSize: 13 }}>← Change method</button>
+      </div>
+
       {/* Step Indicator */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginTop: 24, marginBottom: 32 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginTop: 16, marginBottom: 32 }}>
         <StepIndicator step={1} label="GitHub" current={currentStep} />
         <StepConnector active={currentStep >= 2} />
         <StepIndicator step={2} label="Details" current={currentStep} />
@@ -486,6 +636,8 @@ export default function ImportProfile() {
           </div>
         </div>
       )}
+
+      </>)}
 
       {/* CSS for spinner animation */}
       <style>{`
