@@ -19,7 +19,7 @@ export function evaluatePolicy(job: Job, policy: Policy, alreadyApplied: boolean
   if (roles.length && !roles.some(r => job.title.toLowerCase().includes(r.toLowerCase()))) reasons.push('Role is outside target roles.');
   if (policy.requireSponsorship === false && job.sponsorship === true) reasons.push('Sponsorship requirement conflicts with policy.');
   if (policy.blockDuplicates && alreadyApplied) reasons.push('Duplicate application blocked.');
-  const risky = job.trustScore < 70 || JSON.parse(job.riskFlagsJson || '[]').length > 0;
+  const risky = job.trustScore < 70 || ((() => { try { return JSON.parse(job.riskFlagsJson || '[]'); } catch { return []; } })()).length > 0;
   if (risky && policy.requireApprovalForRisky) reasons.push('Risk signals require human approval.');
 
   const hardFail = reasons.filter(r => !r.includes('Risk signals')).length > 0;

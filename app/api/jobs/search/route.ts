@@ -151,6 +151,7 @@ async function fetchLeverJobs(board: string, keywords: string, location: string,
 }
 
 export async function GET(req: Request): Promise<Response> {
+  // Rate limiting is handled via middleware (see middleware.ts)
   const { searchParams } = new URL(req.url);
   const keywords = searchParams.get('keywords') || '';
   const location = searchParams.get('location') || '';
