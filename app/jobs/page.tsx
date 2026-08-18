@@ -22,6 +22,10 @@ interface SearchMeta {
   fetchedAt: string;
 }
 
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]*>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 export default function Jobs() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
@@ -191,7 +195,7 @@ export default function Jobs() {
                   </span>
                 </div>
                 <p className="small muted" style={{ margin: '8px 0' }}>
-                  {job.description.slice(0, 200)}{job.description.length > 200 ? '…' : ''}
+                  {stripHtml(job.description).slice(0, 200)}{stripHtml(job.description).length > 200 ? '…' : ''}
                 </p>
                 <div className="row" style={{ gap: 6, marginBottom: 8 }}>
                   <span className="pill">{job.source}</span>

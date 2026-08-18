@@ -17,6 +17,7 @@ export default function PortfolioPage() {
   const [generatedHtml, setGeneratedHtml] = useState('');
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState('');
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   useEffect(() => {
@@ -27,6 +28,7 @@ export default function PortfolioPage() {
 
   async function handleGenerate() {
     setLoading(true);
+    setError('');
     try {
       const res = await fetch('/api/portfolio/generate', {
         method: 'POST',
@@ -35,7 +37,7 @@ export default function PortfolioPage() {
       });
       if (!res.ok) {
         const err = await res.json();
-        alert(err.error || 'Failed to generate portfolio');
+        setError(err.error || 'Failed to generate portfolio');
         return;
       }
       const html = await res.text();
@@ -184,6 +186,7 @@ export default function PortfolioPage() {
               >
                 {loading ? 'Generating…' : '✨ Generate Portfolio'}
               </button>
+              {error && <div className="notice" style={{ color: 'var(--danger)', marginTop: 8 }}>{error}</div>}
             </div>
           </div>
         </section>

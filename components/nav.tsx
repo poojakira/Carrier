@@ -8,7 +8,7 @@ const sections = [
   ['Applications', ['/applications']],
   ['Career Profile', ['/profile']],
   ['AI Agent', ['/agent']],
-  ['Resume Studio', ['/profile']],
+  ['Resume Studio', ['/portfolio']],
   ['Interview Center', ['/interviews']],
   ['Companies', ['/companies']],
   ['Analytics', ['/analytics']],
@@ -19,7 +19,7 @@ const sections = [
 
 export function Nav({ user }: { user: { name: string } }) {
   const path = usePathname();
-  return <aside className="sidebar">
+  return <aside className="sidebar" aria-label="Main navigation">
     <div className="logo">CAREERLY <span>OS</span></div>
     <div className="nav-section"><div className="nav-title">Workspace</div><div className="nav">
       {sections.map(([label, paths]) => <Link key={label} className={paths.some(p => path === p || (p !== '/dashboard' && path.startsWith(p))) ? 'active' : ''} href={paths[0]}>{label}</Link>)}

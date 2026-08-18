@@ -267,17 +267,11 @@ export default function AgentChat() {
                   </button>
                 </div>
               </div>
-              <div
-                dangerouslySetInnerHTML={{ __html: resumeHtml }}
-                style={{
-                  background: '#fff',
-                  padding: 24,
-                  borderRadius: 8,
-                  border: '1px solid var(--border, #e5e7eb)',
-                  fontSize: 12,
-                  lineHeight: 1.4,
-                  color: '#1a1a1a',
-                }}
+              <iframe
+                srcDoc={resumeHtml}
+                sandbox=""
+                title="Generated resume preview"
+                style={{ width: '100%', height: 600, border: '1px solid #2a2a3e', borderRadius: 8 }}
               />
             </div>
           </div>

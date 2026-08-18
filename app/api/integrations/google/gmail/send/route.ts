@@ -1,2 +1,53 @@
-import { NextResponse } from 'next/server'; import { requireUser } from '@/lib/auth'; import { getGoogleAccessToken } from '@/lib/integrations';
-export async function POST(req:Request){try{const u=await requireUser();const {to,subject,text}=await req.json();if(!to||!subject||!text)return NextResponse.json({error:'to, subject and text are required'},{status:400});const raw=[`To: ${to}`,`Subject: ${subject}`,'Content-Type: text/plain; charset=UTF-8','',text].join('\r\n');const token=await getGoogleAccessToken(u.id);const r=await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({raw:Buffer.from(raw).toString('base64url')})});const data=await r.json();if(!r.ok)return NextResponse.json({error:data.error?.message||'Gmail send failed'},{status:r.status});return NextResponse.json(data);}catch(e){return NextResponse.json({error:e instanceof Error?e.message:'Gmail error'},{status:400});}}
+import { NextResponse } from 'next/server';
+import { requireUser } from '@/lib/auth';
+import { getGoogleAccessToken } from '@/lib/integrations';
+
+const sanitize = (s: string) => s.replace(/[\r\n]/g, '');
+
+export async function POST(req: Request) {
+  try {
+    const u = await requireUser();
+    const { to, subject, text } = await req.json();
+    if (!to || !subject || !text)
+      return NextResponse.json(
+        { error: 'to, subject and text are required' },
+        { status: 400 }
+      );
+
+    const safeTo = sanitize(to);
+    const safeSubject = sanitize(subject);
+
+    const raw = [
+      `To: ${safeTo}`,
+      `Subject: ${safeSubject}`,
+      'Content-Type: text/plain; charset=UTF-8',
+      '',
+      text,
+    ].join('\r\n');
+
+    const token = await getGoogleAccessToken(u.id);
+    const r = await fetch(
+      'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ raw: Buffer.from(raw).toString('base64url') }),
+      }
+    );
+    const data = await r.json();
+    if (!r.ok)
+      return NextResponse.json(
+        { error: data.error?.message || 'Gmail send failed' },
+        { status: r.status }
+      );
+    return NextResponse.json(data);
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : 'Gmail error' },
+      { status: 400 }
+    );
+  }
+}

@@ -1,5 +1,114 @@
-import { NextResponse } from 'next/server'; import { z } from 'zod'; import { requireUser } from '@/lib/auth'; import { db } from '@/lib/db'; import { calculateMatch } from '@/lib/matching'; import { audit } from '@/lib/audit';
-const schema=z.object({source:z.enum(['greenhouse','lever','manual']).default('manual'),externalId:z.string().min(1),company:z.string(),title:z.string(),location:z.string(),url:z.string().url(),description:z.string(),salaryMin:z.number().optional(),salaryMax:z.number().optional(),remote:z.boolean().optional(),sponsorship:z.boolean().optional(),requirements:z.array(z.string()).optional()});
-function profileOf(u:any){return {skills:JSON.parse(u.profile?.skillsJson||'[]'),roles:JSON.parse(u.profile?.targetRolesJson||'[]'),locations:JSON.parse(u.profile?.targetLocationsJson||'[]'),salaryMin:u.profile?.salaryMin,sponsorship:u.profile?.sponsorship,projects:JSON.parse(u.profile?.projectsJson||'[]')}}
-export async function GET(){try{const u=await requireUser();const jobs=await db.job.findMany({orderBy:[{overallFit:'desc'},{createdAt:'desc'}],take:100});return NextResponse.json(jobs);}catch(e){return NextResponse.json({error:'Unauthorized'},{status:401})}}
-export async function POST(req:Request){try{const u=await requireUser();const d=schema.parse(await req.json());const scores=calculateMatch({id:'',userId:null,source:d.source,externalId:d.externalId,company:d.company,title:d.title,location:d.location,url:d.url,description:d.description,salaryMin:d.salaryMin??null,salaryMax:d.salaryMax??null,remote:d.remote??false,sponsorship:d.sponsorship??null,trustScore:70,technicalFit:0,experienceFit:0,educationFit:0,projectFit:0,locationFit:0,compensationFit:0,authorizationFit:0,seniorityFit:0,careerValueFit:0,overallFit:0,requirementsJson:'[]',riskFlagsJson:'[]',createdAt:new Date(),updatedAt:new Date()} as any, profileOf(u));const { requirements = [], ...jobData } = d; const job=await db.job.upsert({where:{source_externalId:{source:d.source,externalId:d.externalId}},update:{...jobData,...scores,requirementsJson:JSON.stringify(requirements)},create:{userId:u.id,...jobData,...scores,trustScore:70,requirementsJson:JSON.stringify(requirements),riskFlagsJson:'[]'}});await audit(u.id,'JOB_INGESTED','job',job.id,{source:d.source});return NextResponse.json(job);}catch(e){return NextResponse.json({error:e instanceof Error?e.message:'Invalid request'},{status:400});}}
+import { NextResponse } from 'next/server';
+import { z } from 'zod';
+import { requireUser } from '@/lib/auth';
+import { db } from '@/lib/db';
+import { calculateMatch } from '@/lib/matching';
+import { audit } from '@/lib/audit';
+
+const schema = z.object({
+  source: z.enum(['greenhouse', 'lever', 'manual']).default('manual'),
+  externalId: z.string().min(1),
+  company: z.string(),
+  title: z.string(),
+  location: z.string(),
+  url: z.string().url(),
+  description: z.string(),
+  salaryMin: z.number().optional(),
+  salaryMax: z.number().optional(),
+  remote: z.boolean().optional(),
+  sponsorship: z.boolean().optional(),
+  requirements: z.array(z.string()).optional(),
+});
+
+function profileOf(u: any) {
+  return {
+    skills: JSON.parse(u.profile?.skillsJson || '[]'),
+    roles: JSON.parse(u.profile?.targetRolesJson || '[]'),
+    locations: JSON.parse(u.profile?.targetLocationsJson || '[]'),
+    salaryMin: u.profile?.salaryMin,
+    sponsorship: u.profile?.sponsorship,
+    projects: JSON.parse(u.profile?.projectsJson || '[]'),
+  };
+}
+
+export async function GET() {
+  try {
+    const u = await requireUser();
+    const jobs = await db.job.findMany({
+      orderBy: [{ overallFit: 'desc' }, { createdAt: 'desc' }],
+      take: 100,
+    });
+    return NextResponse.json(jobs);
+  } catch (e) {
+    if (e instanceof Error && e.message === 'Unauthorized') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : 'Internal server error' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const u = await requireUser();
+    const d = schema.parse(await req.json());
+    const scores = calculateMatch(
+      {
+        id: '',
+        userId: null,
+        source: d.source,
+        externalId: d.externalId,
+        company: d.company,
+        title: d.title,
+        location: d.location,
+        url: d.url,
+        description: d.description,
+        salaryMin: d.salaryMin ?? null,
+        salaryMax: d.salaryMax ?? null,
+        remote: d.remote ?? false,
+        sponsorship: d.sponsorship ?? null,
+        trustScore: 70,
+        technicalFit: 0,
+        experienceFit: 0,
+        educationFit: 0,
+        projectFit: 0,
+        locationFit: 0,
+        compensationFit: 0,
+        authorizationFit: 0,
+        seniorityFit: 0,
+        careerValueFit: 0,
+        overallFit: 0,
+        requirementsJson: '[]',
+        riskFlagsJson: '[]',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      } as any,
+      profileOf(u)
+    );
+    const { requirements = [], ...jobData } = d;
+    const job = await db.job.upsert({
+      where: { source_externalId: { source: d.source, externalId: d.externalId } },
+      update: { ...jobData, ...scores, requirementsJson: JSON.stringify(requirements) },
+      create: {
+        userId: u.id,
+        ...jobData,
+        ...scores,
+        trustScore: 70,
+        requirementsJson: JSON.stringify(requirements),
+        riskFlagsJson: '[]',
+      },
+    });
+    await audit(u.id, 'JOB_INGESTED', 'job', job.id, { source: d.source });
+    return NextResponse.json(job);
+  } catch (e) {
+    if (e instanceof Error && e.message === 'Unauthorized') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : 'Invalid request' },
+      { status: 400 }
+    );
+  }
+}
